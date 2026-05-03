@@ -31,6 +31,67 @@
 - ❌ Agent SDK 闭环自愈 + 自动 PR
 - ❌ 老系统持续测试（老系统只是录制工厂，一次性）
 
+### 业务结构概览
+
+项目主导航有 **3 个 menu**：
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  1. Account Opening   2. Maker Dashboard   3. Checker Dash  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### Menu 1: Account Opening（开户主流程）
+
+```
+1.1 选择类型: [Non-Face-to-Face] | [Face-to-Face]
+            ↓
+1.2 账户类型: [Sole] | [Joint]
+            ↓
+1.3 入口分流:
+    ├─ Search 现有 customer
+    │    ├─ 1.3.1.1 输入 customer number → search
+    │    └─ 1.3.1.2 列表显示该 customer 所有 applications
+    │              点击未完成的 → resume 到之前步骤/状态
+    └─ 新建 application
+         ├─ 1.3.2.1 直接创建：所有数据重新填
+         └─ 1.3.2.2 search 后基于 customer 创建：用户信息 prefill
+            ↓
+1.4 多步表单流程（4-7 步，步数随类型而变）
+    每步含：
+      - 多个 subTabs（页内 tab 切换）
+      - 底部按钮: [Exit] [Save] [Back] [Next]
+            ↓
+1.5 提交 → Summary 页（生成 account）
+```
+
+**关键复杂度**：
+- 流程长度可变（4-7 步）
+- 中途可 Save 草稿，Resume 时回到之前的步骤 + 状态
+- Prefill 分支：基于已有 customer 创建时多个字段预填
+- subTab 切换：单步内有多 tab，状态独立
+
+#### Menu 2: Maker Dashboard
+
+- 显示 maker 视角的所有 application 记录
+- 未完成的 application 可在此 resume（替代路径，不必从 menu 1 走 search）
+
+#### Menu 3: Checker Dashboard
+
+- Checker 视角查看 application
+- 查看详情、审核状态等
+
+### 业务结构对测试设计的影响
+
+| 业务特性 | 测试设计取舍 |
+|---|---|
+| 流程长度可变（4-7 步） | E2E case 选 1 个最长（7 步）+ 1 个最短（4 步），覆盖步数变化 |
+| Save / Resume 草稿 | 单步聚焦测试用 `seedToStep` 时优先复用 Save → Resume 而不是手工点完前 N 步 |
+| Prefill 分支 | 单独一个 case 验证"基于 customer 创建后字段确实 prefill" |
+| subTabs | PO 类要建模 `tabIndex` 和 subTab 切换；selector 命名带 tab 标识 |
+| 4 种底部按钮 | PO 提供统一方法 `clickExit()/clickSave()/clickBack()/clickNext()`，测试不直接点 |
+| 3 个 menu 各有视角 | maker dashboard 列表页是 **Pilot 1 最佳候选**（只读、无 KYC、最易跑通工具链） |
+
 ---
 
 ## 1. 决策约束（已锁定）
@@ -46,7 +107,7 @@
 | KYC/OCR/反欺诈 | 沙箱有完整测试模式开关 |
 | 测试身份证/手机号段 | 有专用测试段 |
 | 数据清理 | DBA 月度 cron（DELETE WHERE email LIKE 'e2e-%'） |
-| 流程结构 | 5-15 步、多步骤带分支、有草稿保存 |
+| 流程结构 | 4-7 步多步骤、有 subTabs、Save/Resume 草稿、Prefill 分支（详见 §0 业务概览） |
 | 测试运行环境 | opencode + gpt-5.4 |
 | 时间预算 | 2 周（10 工作日） |
 
@@ -379,11 +440,17 @@ hook
        "test": "happy path",
        "step": 'getByTestId("order-submit-btn").click',
        "kind": "selector_missing",
+       "error_message": "Locator not found: getByTestId('order-submit-btn')",
        "evidence": {
-         "trace": "test-results/order-submit/trace.zip",
-         "screenshot": "test-results/order-submit/failed.png"
+         // ↓ AI 主用（全是文本）
+         "dom_excerpt": "<form>...<button class='primary'>提交</button>...</form>",
+         "console_logs": ["[error] React: hydration mismatch"],
+         "network_summary": [{ "url": "/api/orders", "method": "POST", "status": 0 }],
+         // ↓ 仅人工，AI 忽略
+         "screenshot_path": "test-results/order-submit/failed.png",
+         "trace_path":      "test-results/order-submit/trace.zip"
        },
-       "hypothesis": "新项目 OrderPage 没加 data-testid=order-submit-btn"
+       "hypothesis": "DOM 里有 button class='primary' 但缺 data-testid=order-submit-btn"
      }]
    }
  → 报告回喂主 agent
@@ -505,12 +572,15 @@ test.beforeEach(async ({ page }) => {
 
 ### 4.4 取证配置
 
+> **关键设计约束**: 公司 LLM 仅支持文本输入。**screenshot/video/trace.zip 只供人工查看**，AI 必须仅基于文本证据（DOM excerpt / console / network / error message）做诊断。test-runner 必须在 JSON 输出里产出文本字段，不能假设 AI 能解读图像或二进制。
+
+#### 基础配置（playwright.config.ts）
+
 ```ts
-// playwright.config.ts
 use: {
-  trace:      'retain-on-failure',
-  screenshot: 'only-on-failure',
-  video:      'retain-on-failure',
+  trace:      'retain-on-failure',  // 仅人工
+  screenshot: 'only-on-failure',    // 仅人工
+  video:      'retain-on-failure',  // 仅人工
 },
 reporter: [
   ['json', { outputFile: 'test-results/results.json' }],   // test-runner 解析
@@ -518,6 +588,65 @@ reporter: [
   ['list'],
 ],
 ```
+
+#### 文本证据自动 dump（fixture / setup）
+
+```ts
+// e2e/fixtures/text-evidence.ts
+import { test as base, Page } from '@playwright/test';
+import * as fs from 'fs/promises';
+
+type TextEvidence = {
+  consoleLogs: string[];
+  networkLog: Array<{ url: string; method: string; status: number; timestamp: number }>;
+};
+
+export const test = base.extend<{ textEvidence: TextEvidence }>({
+  textEvidence: async ({ page }, use, info) => {
+    const evidence: TextEvidence = { consoleLogs: [], networkLog: [] };
+
+    page.on('console', msg => evidence.consoleLogs.push(`[${msg.type()}] ${msg.text()}`));
+    page.on('response', resp => evidence.networkLog.push({
+      url: resp.url(), method: resp.request().method(),
+      status: resp.status(), timestamp: Date.now(),
+    }));
+
+    await use(evidence);
+
+    // 失败时 dump 三份文本
+    if (info.status !== 'passed') {
+      await fs.mkdir(info.outputDir, { recursive: true });
+      await fs.writeFile(`${info.outputDir}/dom.html`, await page.content());
+      await fs.writeFile(`${info.outputDir}/console.log`, evidence.consoleLogs.join('\n'));
+      await fs.writeFile(`${info.outputDir}/network.json`, JSON.stringify(evidence.networkLog, null, 2));
+    }
+  },
+});
+```
+
+每个 case 文件改用这个增强版 `test`：
+
+```ts
+import { test, expect } from '@/fixtures/text-evidence';
+
+test('happy path', async ({ page }) => {
+  // 自动捕获 console/network，失败时自动 dump dom.html
+});
+```
+
+#### test-runner subagent 内部的 DOM excerpt 截取
+
+test-runner 拿到 `dom.html`（可能几 MB），不能整段塞 JSON：
+
+```
+1. 读 results.json 找失败 step 的目标 selector（如 testid='order-submit-btn'）
+2. 在 dom.html 里全文搜索该 selector
+   - 命中 → 截取该元素 + 父级 3 层 + 兄弟节点 ~100 行
+   - 未命中 → 在 DOM 里搜近似元素（同标签名/同 role）；都没有就截 body 前 5KB + 后 5KB
+3. 截取结果作为 evidence.dom_excerpt 字段写入 JSON
+```
+
+输出大小目标: `dom_excerpt` 控制在 **2-5KB**（约 50-150 行 HTML），既给 AI 足够上下文又不爆 context。
 
 ### 4.5 老沙箱 / Oracle 风险
 
@@ -533,6 +662,7 @@ reporter: [
 | 生成 TS 编译失败 | tsc 直接退，主 agent 看错误信息再生成 |
 | 假断言（pass 但跟 spec 不符） | spec 中 expect 标号 + 测试代码 `// from spec #N` 注释，人工 review 时映射检查 |
 | Hook 死循环 | `max_iterations: 5`，超过停下让人介入 |
+| **AI 试图"读图"做判断**（gpt-5.4 不支持多模态） | test-runner prompt 显式禁用图像引用；hypothesis 必须基于 dom_excerpt / console / network 文本证据；评审时若发现 hypothesis 含"截图显示..."类措辞，视为 prompt 漏写要修补 |
 
 ```jsonc
 // .opencode/hook-config.json（具体字段名以 opencode 实际版本为准）
@@ -631,7 +761,8 @@ D1-D2       D3-D7            D8-D10
 
 #### Pilot 1: 最简非开户流程（D1 下午）
 - 目标: 验证整条工具链能跑通
-- 候选: 系统中最简单的非开户页面（如登录页 / 系统首页 / 任意只读查询页 / 一个不涉及 KYC 的设置页面）—— 由项目实际情况决定
+- **强烈推荐: Maker Dashboard 列表页 / Checker Dashboard 列表页** —— 只读、无 KYC、无多步、无草稿，最易跑通
+- 备选: Account Opening 入口的 1.1 选择页（Non-F2F / F2F 两选项的简单选择）
 - 选择标准: 步骤 ≤3 步、无 KYC/OCR/反欺诈交互、能在 5 分钟内手工走通
 - 走完: 录制 → spec-extractor → spec-merger → test-generator → verify-on-old → 在新项目 SIT 跑通
 
@@ -701,7 +832,7 @@ npm run e2e:case "$@"
 
 ## 6. Test-runner 输出契约
 
-为保证主 agent 收到的失败信息可被一致解析，test-runner subagent 必须输出如下 JSON：
+为保证主 agent 收到的失败信息可被一致解析，且**只用文本证据**（公司 LLM 无多模态），test-runner subagent 必须输出如下 JSON：
 
 ```json
 {
@@ -717,12 +848,24 @@ npm run e2e:case "$@"
       "file": "tests/new/order-submit.spec.ts",
       "step": "page.getByTestId(\"order-submit-btn\").click",
       "kind": "selector_missing | selector_changed | assertion | network | timeout | oracle_drift | infra | flaky",
+      "error_message": "locator.click: Timeout 30000ms exceeded.",
+      "stack": "at OrderSubmitPage.submit (e2e/pages/OrderSubmitPage.ts:42:18)",
       "evidence": {
-        "trace": "test-results/order-submit/trace.zip",
-        "screenshot": "test-results/order-submit/failed.png",
-        "old_fixture_diff": "fixtures/order-submit.json vs actual response: ..."
+        "dom_excerpt": "<form id='order-form'>\n  <input name='amount' value='500'/>\n  <button class='primary'>提交</button>\n</form>",
+        "console_logs": [
+          "[error] React: hydration mismatch at OrderForm",
+          "[warn]  deprecated API used"
+        ],
+        "network_summary": [
+          { "url": "/api/orders", "method": "POST", "status": 0, "note": "request never sent" },
+          { "url": "/api/me",     "method": "GET",  "status": 200 }
+        ],
+        "old_fixture_diff": "fixtures/order-submit.json vs actual: status field missing in actual",
+        "screenshot_path": "test-results/order-submit/failed.png",
+        "video_path":      "test-results/order-submit/video.webm",
+        "trace_path":      "test-results/order-submit/trace.zip"
       },
-      "hypothesis": "新项目 OrderPage 还没加 data-testid=order-submit-btn"
+      "hypothesis": "DOM 里有 button 但没有 testid='order-submit-btn'，文本是'提交'用了 class='primary'。建议在新项目 OrderForm 给 button 补 data-testid='order-submit-btn'。"
     }
   ],
   "iteration": 2,
@@ -730,11 +873,34 @@ npm run e2e:case "$@"
 }
 ```
 
-**关键约束**：
+### 字段语义
+
+#### AI 必须看（文本证据）
+| 字段 | 内容 | 大小约束 |
+|---|---|---|
+| `error_message` | Playwright 抛出的错误消息原文 | 单行，<500 字符 |
+| `stack` | 错误 stack trace（裁剪到测试代码层） | 5-15 行 |
+| `evidence.dom_excerpt` | 失败时刻 DOM 的关键片段（4.4 节截取规则） | 2-5KB |
+| `evidence.console_logs` | 浏览器 console 输出（最近 50 条） | 数组，每条 <500 字符 |
+| `evidence.network_summary` | 失败前后的网络请求记录（仅 url/method/status） | 数组，最多 30 条 |
+| `evidence.old_fixture_diff` | 仅 `kind=oracle_drift` 时填，oracle 与实际响应的 diff | <2KB |
+| `hypothesis` | 基于上面文本证据的初步诊断 | 1-3 句话 |
+
+#### 仅供人工查看（AI 必须忽略）
+| 字段 | 用途 |
+|---|---|
+| `evidence.screenshot_path` | 人工排查时打开看 |
+| `evidence.video_path` | 人工看交互过程 |
+| `evidence.trace_path` | 人工用 `npx playwright show-trace` 打开 |
+
+### 关键约束
+
 - `kind` 必须是 8 个枚举之一
+- `hypothesis` **必须仅基于文本证据**——禁止出现"截图显示...""从图片看..."类措辞
 - `hypothesis` 是初步诊断，**不修代码**
 - `iteration` 由 hook 注入，便于主 agent 知道循环到第几次
 - 不允许返回原始 Playwright 日志（context 隔离的意义）
+- screenshot/video/trace 字段保留路径供人事后查，但**不要把图像内容塞进 JSON**
 
 ---
 
@@ -811,9 +977,19 @@ npm run e2e:case "$@"
 1. 读 .opencode/focus.json，确定目标
 2. 跑 npm run e2e:case <names> 或 npm run e2e:smoke
 3. 解析 test-results/results.json
-4. 输出严格符合第 6 章契约的 JSON
+4. 失败时读取每个失败 test 的 outputDir：
+   - 读 dom.html → 按规则截取 dom_excerpt（2-5KB）
+   - 读 console.log → 取最后 50 行作 console_logs
+   - 读 network.json → 取最近 30 条作 network_summary
+5. 输出严格符合第 6 章契约的 JSON
 
-不输出任何 Playwright 原始日志、stack trace、stdout。
+【硬约束】本项目 LLM 仅支持文本输入：
+- 不要尝试读取 *.png / *.webm / *.zip 文件
+- hypothesis 必须仅基于 dom_excerpt / console_logs / network_summary / error_message / stack
+- 禁止在 hypothesis 中出现"截图显示""从图片看""视频中可以看到"等措辞
+- screenshot_path / video_path / trace_path 字段只保留路径供人工查看，不读其内容
+
+不输出任何 Playwright 原始日志、stack trace 全文、stdout。
 hypothesis 字段必须是初步诊断，不能包含修复指令。
 ```
 
@@ -911,25 +1087,37 @@ hypothesis 字段必须是初步诊断，不能包含修复指令。
 2. 团队成员手动浏览 UAT，按 "可达页面/可触发流程" 列 inventory
 3. 两路汇总 → 按业务价值打分 → 选出 15 个
 
-#### 流程清单（D1 上午填完）
+#### 流程清单（基于 §0 业务概览的建议候选，D1 探索后微调确认）
 
-| 类型 | # | 流程名 | 业务描述 | 老路由 | 新路由 | 优先级 |
-|---|---|---|---|---|---|---|
-| E2E 全链路 | E2E-1 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P0 |
-| E2E 全链路 | E2E-2 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P0 |
-| E2E 全链路 | E2E-3 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P0 |
-| 单步聚焦 | S-1 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P1 |
-| 单步聚焦 | S-2 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P1 |
-| 单步聚焦 | S-3 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P1 |
-| 单步聚焦 | S-4 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P1 |
-| 单步聚焦 | S-5 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P1 |
-| 单步聚焦 | S-6 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P1 |
-| 单步聚焦 | S-7 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P1 |
-| 单步聚焦 | S-8 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P1 |
-| 分支跳转 | B-1 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P2 |
-| 分支跳转 | B-2 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P2 |
-| 分支跳转 | B-3 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P2 |
-| 分支跳转 | B-4 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P2 |
+> 下表是基于已知业务结构的**预填候选**，每条还需 D1 上午探索时填入真实路由 / 关键步骤名 / 优先级最终确认。
+
+| 类型 | # | 流程名 | 业务描述 | 老路由 | 新路由 | 优先级 | 状态 |
+|---|---|---|---|---|---|---|---|
+| E2E 全链路 | E2E-1 | 直接创建 / Non-F2F / Sole | 主路径，最简：1.1 选 Non-F2F → 1.2 Sole → 1.3.2.1 直接创建 → 4 步 → Summary | `[TBD]` | `[TBD]` | P0 | 候选 |
+| E2E 全链路 | E2E-2 | 基于 customer 创建 / F2F / Joint | 最复杂：1.1 选 F2F → 1.2 Joint → 1.3 search customer → 1.3.2.2 基于 customer 创建（验证 prefill） → 7 步 → Summary | `[TBD]` | `[TBD]` | P0 | 候选 |
+| E2E 全链路 | E2E-3 | Resume 草稿（从 Maker Dashboard） | Maker Dashboard 列表 → 点未完成 application → resume 到正确步骤 → 完成剩余步骤 → Summary | `[TBD]` | `[TBD]` | P0 | 候选 |
+| 单步聚焦 | S-1 | 1.1 入口选择 | 验证 Non-F2F / F2F 两选项点击后路由正确 | `[TBD]` | `[TBD]` | P1 | 候选 |
+| 单步聚焦 | S-2 | 1.2 账户类型选择 | 验证 Sole / Joint 两选项点击后流程切换正确 | `[TBD]` | `[TBD]` | P1 | 候选 |
+| 单步聚焦 | S-3 | 1.3.1.1 customer search 输入 | 输入 customer number → search → 列表加载（数据正确） | `[TBD]` | `[TBD]` | P1 | 候选 |
+| 单步聚焦 | S-4 | 1.3.1.2 customer applications 列表 | 显示该 customer 所有 applications，点击未完成项 resume | `[TBD]` | `[TBD]` | P1 | 候选 |
+| 单步聚焦 | S-5 | 1.3.2.2 Prefill 验证 | 基于 customer 创建后，多个字段确实预填正确（这是 prefill 这一关键功能的回归保护） | `[TBD]` | `[TBD]` | P1 | 候选 |
+| 单步聚焦 | S-6 | 任意中间步骤 subTabs 切换 | subTabs 切换状态保留、字段不丢失 | `[TBD]` | `[TBD]` | P1 | 候选 |
+| 单步聚焦 | S-7 | 底部 Save 按钮（保存草稿） | 任意中间步骤点 Save → 退出 → 列表能找到该草稿 | `[TBD]` | `[TBD]` | P1 | 候选 |
+| 单步聚焦 | S-8 | 底部 Back 按钮 | 中间步骤点 Back → 上一步、字段保留 | `[TBD]` | `[TBD]` | P1 | 候选 |
+| 分支跳转 | B-1 | 1.1 选 Non-F2F vs F2F 步数差异 | 选择后流程步数不同（4 vs 7） | `[TBD]` | `[TBD]` | P2 | 候选 |
+| 分支跳转 | B-2 | 1.2 Sole vs Joint 子流程差异 | Joint 多了第二申请人相关字段 | `[TBD]` | `[TBD]` | P2 | 候选 |
+| 分支跳转 | B-3 | 1.3 search vs 新建 | 选 search 进入 customer 输入页；选新建直接进入步骤 1 | `[TBD]` | `[TBD]` | P2 | 候选 |
+| 分支跳转 | B-4 | 底部 Exit 退出确认 | 点 Exit → 弹确认对话框 → 确认后回 menu / 取消后留在原页 | `[TBD]` | `[TBD]` | P2 | 候选 |
+
+> **D1 上午需做的事**：把 `[TBD]` 路由填上，把"候选"状态改成"已确认"或"已替换为 X"，并验证每条 case 在老 UAT 上能手工走通。
+
+#### Maker / Checker Dashboard 是否进 case 清单？
+
+当前 15 个 case 全部围绕 Account Opening。Maker / Checker Dashboard 仅作为：
+- **Pilot 1 候选**（D1 验证工具链）
+- **E2E-3 的入口**（从 Maker Dashboard 列表 resume 草稿）
+
+如果 Maker / Checker 自身的查看功能（搜索、筛选、详情）也需要 E2E 保护，需扩大总数到 20+。本 sprint 不覆盖，列入维护期 backlog。
 
 ### D.6 opencode 配置
 
@@ -1012,3 +1200,12 @@ flows:
 - [ ] opencode 当前版本的 hook/subagent 配置方式已查清（决定 D2 是用原生 hook 还是降级 shell）
 
 > **缺哪一项就停哪一项**，不要"先开始再说"。D1 起步前的 1 小时把这个 checklist 走一遍，能省掉后面 3 天的 debug 时间。
+
+### D.11 模型能力假设（重要）
+
+| 假设 | 影响 | 兜底 |
+|---|---|---|
+| **公司 LLM (gpt-5.4) 仅支持文本输入** | screenshot/video/trace.zip 对 AI 完全无效 | §4.4 文本证据自动 dump、§6 输出契约 text-only、A.4 prompt 显式禁用读图 |
+| 模型不支持图像 OCR | 不能从 KYC 测试文件提取信息 | KYC OCR 测试只验证"上传成功 + 后端接受"，不验证 OCR 准确性 |
+| 模型上下文窗口（按 gpt-5 系列） | dom_excerpt 不能太大 | 截取规则 2-5KB，超过就只取头尾 |
+| 如未来公司 LLM 升级支持多模态 | 设计仍向后兼容 | screenshot_path 字段一直保留，未来加 prompt 让 AI 也读图即可，不需要重构 |
