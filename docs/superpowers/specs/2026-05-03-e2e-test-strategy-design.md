@@ -90,7 +90,7 @@
 | Prefill 分支 | 单独一个 case 验证"基于 customer 创建后字段确实 prefill" |
 | subTabs | PO 类要建模 `tabIndex` 和 subTab 切换；selector 命名带 tab 标识 |
 | 4 种底部按钮 | PO 提供统一方法 `clickExit()/clickSave()/clickBack()/clickNext()`，测试不直接点 |
-| 3 个 menu 各有视角 | maker dashboard 列表页是 **Pilot 1 最佳候选**（只读、无 KYC、最易跑通工具链） |
+| 3 个 menu 各有视角 | maker dashboard 列表页是 **Pilot 1 最佳候选**（只读、无多步、最易跑通工具链） |
 
 ---
 
@@ -104,11 +104,9 @@
 | AI 介入点 | 提炼规格 / 改写脚本 / 抽断言 / 失败诊断 |
 | Selector 策略 | testid 优先，role/label 兜底 |
 | 老系统访问 | 有沙箱 |
-| KYC/OCR/反欺诈 | 沙箱有完整测试模式开关 |
-| 测试身份证/手机号段 | 有专用测试段 |
-| 数据清理 | DBA 月度 cron（DELETE WHERE email LIKE 'e2e-%'） |
 | 流程结构 | 4-7 步多步骤、有 subTabs、Save/Resume 草稿、Prefill 分支（详见 §0 业务概览） |
 | 测试运行环境 | opencode + gpt-5.4 |
+| 测试目标环境 | **本地 dev 为主**（迭代快），SIT 为辅（部署后验证）；新项目三个 menu 已全部上 SIT |
 | 时间预算 | 2 周（10 工作日） |
 
 ---
@@ -206,7 +204,7 @@ e2e/
 ├── pages/                      # PO 类（业务命名）
 │   └── AccountOpeningFlow.ts
 ├── data/
-│   ├── customer-factory.ts     # 测试数据生成
+│   ├── test-data-factory.ts    # 测试数据生成
 │   └── accounts.ts             # 测试账号（按 case 分配）
 ├── tests/
 │   ├── verify-on-old/          # 一次性，跑通后归档
@@ -498,77 +496,74 @@ export default defineConfig({
 
 ### 4.3 数据隔离（Account Opening 特化）
 
-**核心洞察**: 每个 case = 一个新 customer。**测试天然幂等，不需要清理接口**。问题转变为"生成保证不冲突的 KYC 数据 + 防风控拦截"。
+**核心洞察**: 每个 case = 一个新 application。**测试天然幂等，不需要任何清理机制**。问题简化为"生成保证不冲突的 application 测试数据"。
 
-#### Customer Factory
+> **本项目无需处理**: KYC / OCR / 活体识别 / 反欺诈 / AML —— 这些不在测试范围内（业务流程不涉及，或对 e2e 测试不需要 mock）。
+> **本项目无需做**: 测试数据清理 —— 沙箱 DB 数据堆积可接受，运维不介入。
+
+#### Test Data Factory
+
 ```ts
-// e2e/data/customer-factory.ts
+// e2e/data/test-data-factory.ts
 import { randomUUID } from 'crypto';
 
-export interface TestCustomer {
+export interface TestApplicationData {
   runId: string;
   caseId: string;
-  email: string;
-  phone: string;
-  idNumber: string;
-  firstName: string;
-  lastName: string;
-  birthDate: string;
+  // application 业务字段：根据老代码探索后补充（D1 探索）
+  // 例如：applicationName, contactEmail, address 等
+  uniqueTag: string;   // 用于在 UAT 上反查"这条是 e2e-xxx 跑出来的"
 }
 
-export function createTestCustomer(caseId: string): TestCustomer {
+export function createTestData(caseId: string): TestApplicationData {
   const runId = process.env.RUN_ID ?? randomUUID().slice(0, 8);
   const seq   = Date.now().toString().slice(-7);
-
   return {
     runId,
     caseId,
-    email:     `e2e-${caseId}-${runId}-${seq}@test.local`,
-    phone:     `199${seq.slice(-8)}`,
-    idNumber:  `99999${seq}1990010100`,
-    firstName: 'E2E',
-    lastName:  `${caseId}-${seq}`,
-    birthDate: '1990-01-01',
+    uniqueTag: `e2e-${caseId}-${runId}-${seq}`,
   };
 }
+
+// 已知测试 customer（用于 search 现有 customer 的场景）
+// 由沙箱团队预置；从环境变量读
+export const KNOWN_TEST_CUSTOMERS = {
+  default:  process.env.TEST_CUSTOMER_DEFAULT  ?? '[TBD]',  // 用于 1.3.1 search 场景
+  withApps: process.env.TEST_CUSTOMER_WITH_APPS ?? '[TBD]', // 已有多条 applications，用于列表测试
+};
 ```
 
-四个特性：
+特性：
 - **唯一**（同 runId 内不冲突）：`Date.now()` + 自增 seq
-- **可追溯**（出问题能反查）：email/lastName 嵌 `caseId-runId-seq`
-- **可识别**（DBA / 业务方一眼认出）：`e2e-` 前缀 + 测试号段 + `@test.local`
+- **可追溯**（出问题能反查）：`uniqueTag` 嵌 `caseId-runId-seq`
+- **可识别**（运维/业务方一眼认出）：`e2e-` 前缀
 - **可重放**（debug 时复现）：显式传 `RUN_ID=xxx` 重跑产出可预测数据
 
-#### Sandbox Bypass（已确认沙箱全部支持）
-
-| 系统 | 沙箱绕法 |
-|---|---|
-| 公安身份证校验 | 测试身份证段（`99999*`）直接放过 |
-| 短信验证码 | 测试号段固定验证码 / sandbox bypass |
-| 邮箱验证 | `@test.local` 域跳过 |
-| 反欺诈/风控 | 测试 IP / 测试账号绕过 |
-| KYC OCR | 上传特定文件名 → mock |
-| 活体识别 | sandbox skip 开关 |
-| AML 反洗钱 | 测试身份段不命中名单 |
+#### beforeEach（极简）
 
 ```ts
-// e2e/setup.ts
-test.beforeEach(async ({ page }) => {
-  await page.context().addCookies([
-    { name: 'sandbox-skip-kyc', value: 'true', url: process.env.PW_BASE! }
-  ]);
+test.beforeEach(async ({ page }, info) => {
+  // 登录测试账号（PO 提供 login helper）
+  await login(page, process.env.SANDBOX_USER!, process.env.SANDBOX_PWD!);
 });
 ```
 
-#### KYC / OCR / 活体处理（按推荐度）
-1. 沙箱总开关（`?skipKyc=true` / cookie / API 配置）
-2. Playwright 上传预设文件
-3. Playwright 路由 mock（最后手段）
+无 sandbox bypass、无 KYC 配置、无 reset 调用。
 
-#### 数据堆积兜底
-**DBA 月度 cron**: `DELETE FROM customer WHERE email LIKE 'e2e-%'`
-- 不依赖业务接口
-- 第一周内必须跟 DBA 确认部署
+#### 测试 customer 怎么用
+
+| 场景 | 数据来源 |
+|---|---|
+| 1.3.2.1 直接创建 application | 用 `createTestData(caseId)` 生成的字段填表 |
+| 1.3.2.2 基于 customer 创建（验证 prefill） | 用 `KNOWN_TEST_CUSTOMERS.default` 做 search，然后基于该 customer 新建 |
+| 1.3.1 customer search → applications 列表 | 用 `KNOWN_TEST_CUSTOMERS.withApps`，沙箱预置至少 1 条已存在 application |
+| Resume 草稿（E2E-3） | 测试中先 Save 一次草稿留下 applicationId，下一段用同 id Resume |
+
+#### 数据堆积
+
+每跑一次会留下若干 application 在沙箱 DB。本项目**接受堆积**，无清理机制。
+
+如果未来沙箱性能因数据量出问题，再补（不进 2 周 sprint 范围）。
 
 ### 4.4 取证配置
 
@@ -695,7 +690,7 @@ test-runner 拿到 `dom.html`（可能几 MB），不能整段塞 JSON：
 #### E2E 全链路（3 个，最有代表性的主路径）
 - 个人/本地/年轻/进取（Pilot 候选）
 - 企业/本地（企业流程独立）
-- 个人/外籍（外籍 KYC 分支）
+- 个人/外籍（外籍流程分支）
 
 #### 单步聚焦（8 个，主战场）
 关键能力 `seedToStep(n)`：UI 层走完前 N 步，用于在 hook 循环里"修哪一步只跑哪一步"。
@@ -745,15 +740,15 @@ D1-D2       D3-D7            D8-D10
 
 | 天 | 工作 | 产出 |
 |---|------|------|
-| **D1 上午** | (并行) **A: 读老代码 + 浏览 UAT，列 15 个 case 清单 → 写入附录 D**；B: 项目脚手架 / record-with-network / customer-factory / sandbox bypass / 4 个 subagent prompt v0 / 找 DBA 沟通 cron | case 清单确定 + 工具链可用 |
+| **D1 上午** | (并行) **A: 读老代码 + 浏览 UAT，列 15 个 case 清单 → 写入附录 D**；B: 项目脚手架 / record-with-network / test-data-factory / 4 个 subagent prompt v0 | case 清单确定 + 工具链可用 |
 | **D1 下午** | Pilot 1（最简非开户流程，验证工具链）整条流水线走一次 | 工具链验证完毕 |
 | **D2** | Pilot 2（个人/本地/年轻/进取 开户主路径）走通；completion hook 配置 + 真实闭环跑一次 | 1 个开户 case 在 hook 循环跑通 |
 | **D3-D4** | 2 个 E2E（企业本地、个人外籍）+ 2 个单步 | 4 个 case |
-| **D5-D6** | 4 个单步（KYC、风险偏好、协议等） | 4 个 case |
+| **D5-D6** | 4 个单步（subTabs、Save/Resume、Prefill、Back/Exit 等） | 4 个 case |
 | **D7** | 4 个分支跳转 + 2 个剩余单步 | 6 个 case |
 | **D8** | 补缺 + Flaky 标记 + 全部 case 在 verify-on-old 通过 | 15 个 case 全产 |
 | **D9** | 团队上手文档（2 页 SOP）+ 失败分诊单页 | 文档交付 |
-| **D10** | DBA cron 验证 + 整体复查 + buffer | 缓冲日 |
+| **D10** | 整体复查 + buffer + 第一次跑全量 smoke 验稳定性 | 缓冲日 |
 
 合计 **3 E2E + 8 单步 + 4 分支 = 15 个 case**
 
@@ -761,9 +756,9 @@ D1-D2       D3-D7            D8-D10
 
 #### Pilot 1: 最简非开户流程（D1 下午）
 - 目标: 验证整条工具链能跑通
-- **强烈推荐: Maker Dashboard 列表页 / Checker Dashboard 列表页** —— 只读、无 KYC、无多步、无草稿，最易跑通
+- **强烈推荐: Maker Dashboard 列表页 / Checker Dashboard 列表页** —— 只读、无多步、无草稿，最易跑通
 - 备选: Account Opening 入口的 1.1 选择页（Non-F2F / F2F 两选项的简单选择）
-- 选择标准: 步骤 ≤3 步、无 KYC/OCR/反欺诈交互、能在 5 分钟内手工走通
+- 选择标准: 步骤 ≤3 步、无外部依赖、能在 5 分钟内手工走通
 - 走完: 录制 → spec-extractor → spec-merger → test-generator → verify-on-old → 在新项目 SIT 跑通
 
 #### Pilot 2: 开户主路径（D2 整天）
@@ -782,8 +777,7 @@ D1-D2       D3-D7            D8-D10
 | verify-on-old | 失败时能区分"新项目错"vs"业务理解错"，调试时间不爆炸 |
 | 双源对照（录制 + spec-extractor） | spec 质量保证 |
 | 测试金字塔 | hook 循环跑得动的前提 |
-| Customer Factory + Sandbox bypass | 不可绕过 |
-| DBA cron | 沙箱会爆 |
+| Test Data Factory | 不可绕过 |
 
 #### 砍 / 推迟（接受功能性损失）
 | 项 | 推迟方案 | 风险 |
@@ -803,7 +797,6 @@ D1-D2       D3-D7            D8-D10
 | spec-merger 输出质量差 | 中 | 中 | Phase 1 前 3 个 case 持续调 prompt；超过 3 个还不行 → 退化为人工写 spec，AI 只做 generator |
 | AI 生成的脚本反复假断言 | 中 | 中 | spec 中 expect 标号 + 测试代码注释（4.6 节方案） |
 | Pilot 2 选错（太复杂） | 低 | 中 | D2 中午还没跑通 → 立刻换更简单的 case |
-| DBA cron 没落实 | 低 | 中 | D1 必须发起沟通，不拖 |
 
 #### Hook 降级路径（D2 18:00 检查点未通过时启用）
 
@@ -1017,11 +1010,9 @@ hypothesis 字段必须是初步诊断，不能包含修复指令。
 ### 工具链 (D1-D2)
 - [ ] e2e/ 项目骨架
 - [ ] record-with-network.mjs
-- [ ] customer-factory.ts + accounts.ts
-- [ ] sandbox bypass setup
+- [ ] test-data-factory.ts + accounts.ts
 - [ ] 4 个 subagent prompt
 - [ ] completion hook 配置（或降级 shell wrapper）
-- [ ] DBA cron 部署
 
 ### 测试用例 (D3-D8)
 - [ ] 3 个 E2E 全链路 case
@@ -1067,18 +1058,15 @@ hypothesis 字段必须是初步诊断，不能包含修复指令。
 | 并发备用账号（至少 2-3 个） | `[TBD]` | 运维 |
 | 登录步骤说明（如有特殊：双因子/验证码/SSO） | `[TBD - 步骤序列]` | 沙箱团队 |
 
-### D.4 沙箱 Bypass 具体配置（已确认存在，但具体启用方式待查）
+### D.4 沙箱预置数据（仅需测试 customer，无 KYC 配置）
+
+> 本项目**不需要** KYC / OCR / 活体 / 反欺诈 / AML 任何 bypass 配置。沙箱测试账号能登录、能创建 application 即可。
 
 | 配置项 | 值 | 来源 |
 |---|---|---|
-| KYC bypass 启用方式 | `[TBD - cookie? URL param? header?]` | 沙箱开发文档 |
-| 测试身份证段 | `[TBD - 例: 99999XXXXXXXXX]` | 风控团队 |
-| 测试手机号段 | `[TBD - 例: 199-9999X-XXXX]` | 风控团队 |
-| 短信验证码（测试号段固定值） | `[TBD - 例: 123456]` | 沙箱团队 |
-| OCR 测试文件路径 / 命名约定 | `[TBD - fixtures/kyc/id-front.jpg 等]` | 沙箱团队 |
-| 活体识别 bypass | `[TBD - 开关名 / 调用方式]` | 沙箱团队 |
-| 反欺诈 IP 白名单 | `[TBD - 团队 IP 段]` | 风控团队 |
-| AML 名单 bypass | `[TBD]` | 合规团队 |
+| 测试 customer (default) | `[TBD - customer number]` | 沙箱团队预置 |
+| 测试 customer (有多条 applications) | `[TBD - customer number]` | 沙箱团队预置 + 至少 1 条已存在 application 用于列表测试 |
+| 测试 application 草稿（用于 Resume 场景） | `[TBD - 通过 e2e 自己 Save 留下，或沙箱团队预置]` | 沙箱团队 / e2e seed |
 
 ### D.5 业务流程清单（D1 上午探索后填）
 
@@ -1128,17 +1116,7 @@ hypothesis 字段必须是初步诊断，不能包含修复指令。
 | completion hook 配置位置 + 字段名 | `[TBD]` | opencode 文档（决定 hook 能否原生支持，否则降级 shell） |
 | 模型 | gpt-5.4 | 已定 |
 
-### D.7 DBA 协议
-
-| 配置项 | 值 | 来源 |
-|---|---|---|
-| DBA 联系人 | `[TBD]` | 团队 |
-| cron 部署位置 | `[TBD]` | DBA |
-| cron 频率 | 月度（每月 1 号 02:00 默认） | 可调 |
-| 删除条件 SQL | `DELETE FROM customer WHERE email LIKE 'e2e-%'` | 默认 |
-| 删除前是否备份 / 保留多久 | `[TBD]` | DBA |
-
-### D.8 接口/路由信息（D1 探索同时收集）
+### D.7 接口/路由信息（D1 探索同时收集）
 
 | 配置项 | 值 | 来源 |
 |---|---|---|
@@ -1148,22 +1126,24 @@ hypothesis 字段必须是初步诊断，不能包含修复指令。
 | 登录接口（老/新） | `[TBD]` | 探 |
 | 关键开户提交接口 | `[TBD]` | 探 |
 
-### D.9 配置文件模板
+### D.8 配置文件模板
 
-D.1-D.8 都填完后，建议落到 `e2e/.env.local`（不入仓） + `e2e/config.yaml`（入仓）：
+D.1-D.7 都填完后，建议落到 `e2e/.env.local`（不入仓） + `e2e/config.yaml`（入仓）：
 
 ```env
 # .env.local（含敏感信息，不入仓）
 OLD_SANDBOX_URL=https://...
 NEW_SIT_URL=https://...
+NEW_LOCAL_URL=http://localhost:3000
 OLD_TEST_USER=...
 OLD_TEST_PASSWORD=...
 NEW_TEST_USER=...
 NEW_TEST_PASSWORD=...
-SANDBOX_KYC_BYPASS_COOKIE_NAME=...
-SANDBOX_KYC_BYPASS_VALUE=...
-TEST_ID_PREFIX=99999
-TEST_PHONE_PREFIX=19999
+TEST_CUSTOMER_DEFAULT=...
+TEST_CUSTOMER_WITH_APPS=...
+
+# 默认 base URL（本地测试时用 NEW_LOCAL_URL；上 SIT 验证时用 NEW_SIT_URL）
+PW_BASE=$NEW_LOCAL_URL
 ```
 
 ```yaml
@@ -1174,38 +1154,35 @@ projects:
 flows:
   e2e:
     - id: E2E-1
-      name: 个人/本地/年轻/进取主路径
-      old_route: /account/new
-      new_route: /account/new
+      name: 直接创建 / Non-F2F / Sole
+      old_route: [TBD]
+      new_route: [TBD]
   single_step:
     - id: S-1
-      target_step: 4
-      description: 风险偏好选高风险弹双录
+      target_step: 1
+      description: 1.1 入口选择 Non-F2F vs F2F
   branch:
     - id: B-1
-      decision_point: step 1
-      branch_value: corporate
-      expected_route: /account/corporate/info
+      decision_point: 1.1
+      branch_value: F2F
+      expected_outcome: 进入 7 步流程
 ```
 
-### D.10 配置就绪 checklist（D1 启动前最后一遍）
+### D.9 配置就绪 checklist（D1 启动前最后一遍）
 
 - [ ] 项目路径（老/新）已 clone 到本地
-- [ ] UAT URL 可访问，测试账号能登录
-- [ ] 新 SIT URL 可访问
-- [ ] KYC/OCR/活体/反欺诈 bypass 在 UAT 上手工验证一次有效
-- [ ] 测试身份证段、手机号段在 UAT 上能成功创建 customer（手工跑一遍）
+- [ ] 老 UAT URL 可访问，测试账号能登录
+- [ ] 新项目本地 dev 能启起来（**测试主跑环境**），新 SIT URL 可访问（次要环境，定期跑）
+- [ ] 沙箱预置的测试 customer（D.4）确实存在，能成功 search 出来
 - [ ] 15 个 case 清单写在 D.5
-- [ ] DBA 联系人 + cron 部署计划已对齐
 - [ ] opencode 当前版本的 hook/subagent 配置方式已查清（决定 D2 是用原生 hook 还是降级 shell）
 
 > **缺哪一项就停哪一项**，不要"先开始再说"。D1 起步前的 1 小时把这个 checklist 走一遍，能省掉后面 3 天的 debug 时间。
 
-### D.11 模型能力假设（重要）
+### D.10 模型能力假设（重要）
 
 | 假设 | 影响 | 兜底 |
 |---|---|---|
 | **公司 LLM (gpt-5.4) 仅支持文本输入** | screenshot/video/trace.zip 对 AI 完全无效 | §4.4 文本证据自动 dump、§6 输出契约 text-only、A.4 prompt 显式禁用读图 |
-| 模型不支持图像 OCR | 不能从 KYC 测试文件提取信息 | KYC OCR 测试只验证"上传成功 + 后端接受"，不验证 OCR 准确性 |
 | 模型上下文窗口（按 gpt-5 系列） | dom_excerpt 不能太大 | 截取规则 2-5KB，超过就只取头尾 |
 | 如未来公司 LLM 升级支持多模态 | 设计仍向后兼容 | screenshot_path 字段一直保留，未来加 prompt 让 AI 也读图即可，不需要重构 |
