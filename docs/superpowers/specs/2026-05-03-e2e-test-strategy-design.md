@@ -39,7 +39,7 @@
 |------|------|
 | 老系统定位 | 录制工厂（一次性） |
 | 新老 UI 一致性 | 中等（50-80%） |
-| 覆盖范围 | 15 个核心 case（金字塔 3+8+4） |
+| 覆盖范围 | 15 个核心 case（金字塔 3+8+4）—— **数量定，具体清单待附录 D 探索后确定** |
 | AI 介入点 | 提炼规格 / 改写脚本 / 抽断言 / 失败诊断 |
 | Selector 策略 | testid 优先，role/label 兜底 |
 | 老系统访问 | 有沙箱 |
@@ -611,9 +611,11 @@ D1-D2       D3-D7            D8-D10
 
 ### 5.2 Day-by-Day
 
+> **前置条件（D1 启动前必须 ready）**: 附录 D 的所有配置项收集完毕。如果 D1 当天才能凑齐配置，整体 sprint 起步推迟 0.5-1 天，相应砍一两个尾部 case 或缩短 D10 buffer。
+
 | 天 | 工作 | 产出 |
 |---|------|------|
-| **D1 上午** | 项目脚手架 / record-with-network / customer-factory / sandbox bypass / 4 个 subagent prompt v0 / 找 DBA 沟通 cron | 工具链可用 |
+| **D1 上午** | (并行) **A: 读老代码 + 浏览 UAT，列 15 个 case 清单 → 写入附录 D**；B: 项目脚手架 / record-with-network / customer-factory / sandbox bypass / 4 个 subagent prompt v0 / 找 DBA 沟通 cron | case 清单确定 + 工具链可用 |
 | **D1 下午** | Pilot 1（最简非开户流程，验证工具链）整条流水线走一次 | 工具链验证完毕 |
 | **D2** | Pilot 2（个人/本地/年轻/进取 开户主路径）走通；completion hook 配置 + 真实闭环跑一次 | 1 个开户 case 在 hook 循环跑通 |
 | **D3-D4** | 2 个 E2E（企业本地、个人外籍）+ 2 个单步 | 4 个 case |
@@ -856,3 +858,157 @@ hypothesis 字段必须是初步诊断，不能包含修复指令。
 - [ ] 团队上手 SOP（2 页）
 - [ ] 失败分诊单页（按 8 类 kind）
 - [ ] 维护期 SOP（来自第 7 节）
+
+---
+
+## 附录 D: 实施前必填配置（D1 启动前 ready）
+
+整套设计的实施依赖一系列具体配置项。本附录是 **占位符 + 来源说明**。所有 `[TBD]` 必须在 D1 启动前由对应负责人填完，否则起步推迟。
+
+### D.1 项目路径
+
+| 配置项 | 值 | 来源 |
+|---|---|---|
+| 老 Angular 项目本地路径 | `[TBD]` | 团队成员本地 clone |
+| 新 React 项目本地路径 | `[TBD]` | 团队成员本地 clone |
+| e2e 测试代码所在仓库 | `[TBD - 独立仓 / 新项目子目录]` | 决策点（推荐新项目仓 `e2e/` 子目录） |
+
+### D.2 环境地址
+
+| 配置项 | 值 | 来源 |
+|---|---|---|
+| 老 Angular UAT/沙箱 URL | `[TBD]` | 业务方 / 运维 |
+| 老 Angular 线上 URL（参考用） | `[TBD]` | 公开 |
+| 新 React SIT URL | `[TBD]` | 团队 |
+| 新 React 本地 dev URL | `[默认 http://localhost:3000]` | 项目自带 |
+
+### D.3 测试账号
+
+| 配置项 | 值 | 来源 |
+|---|---|---|
+| 老沙箱测试账号（可登录、可发起开户） | `[TBD - 用户名 + 密码]` | 沙箱团队 |
+| 新 SIT 测试账号 | `[TBD]` | 新项目团队 |
+| 并发备用账号（至少 2-3 个） | `[TBD]` | 运维 |
+| 登录步骤说明（如有特殊：双因子/验证码/SSO） | `[TBD - 步骤序列]` | 沙箱团队 |
+
+### D.4 沙箱 Bypass 具体配置（已确认存在，但具体启用方式待查）
+
+| 配置项 | 值 | 来源 |
+|---|---|---|
+| KYC bypass 启用方式 | `[TBD - cookie? URL param? header?]` | 沙箱开发文档 |
+| 测试身份证段 | `[TBD - 例: 99999XXXXXXXXX]` | 风控团队 |
+| 测试手机号段 | `[TBD - 例: 199-9999X-XXXX]` | 风控团队 |
+| 短信验证码（测试号段固定值） | `[TBD - 例: 123456]` | 沙箱团队 |
+| OCR 测试文件路径 / 命名约定 | `[TBD - fixtures/kyc/id-front.jpg 等]` | 沙箱团队 |
+| 活体识别 bypass | `[TBD - 开关名 / 调用方式]` | 沙箱团队 |
+| 反欺诈 IP 白名单 | `[TBD - 团队 IP 段]` | 风控团队 |
+| AML 名单 bypass | `[TBD]` | 合规团队 |
+
+### D.5 业务流程清单（D1 上午探索后填）
+
+#### 探索方法
+1. 用 `spec-extractor` 自动扫老 Angular 仓库 → 列出所有 route + 主要 component
+2. 团队成员手动浏览 UAT，按 "可达页面/可触发流程" 列 inventory
+3. 两路汇总 → 按业务价值打分 → 选出 15 个
+
+#### 流程清单（D1 上午填完）
+
+| 类型 | # | 流程名 | 业务描述 | 老路由 | 新路由 | 优先级 |
+|---|---|---|---|---|---|---|
+| E2E 全链路 | E2E-1 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P0 |
+| E2E 全链路 | E2E-2 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P0 |
+| E2E 全链路 | E2E-3 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P0 |
+| 单步聚焦 | S-1 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P1 |
+| 单步聚焦 | S-2 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P1 |
+| 单步聚焦 | S-3 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P1 |
+| 单步聚焦 | S-4 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P1 |
+| 单步聚焦 | S-5 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P1 |
+| 单步聚焦 | S-6 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P1 |
+| 单步聚焦 | S-7 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P1 |
+| 单步聚焦 | S-8 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P1 |
+| 分支跳转 | B-1 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P2 |
+| 分支跳转 | B-2 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P2 |
+| 分支跳转 | B-3 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P2 |
+| 分支跳转 | B-4 | `[TBD]` | `[TBD]` | `[TBD]` | `[TBD]` | P2 |
+
+### D.6 opencode 配置
+
+| 配置项 | 值 | 来源 |
+|---|---|---|
+| opencode 版本 | `[TBD]` | 用户本地安装 |
+| subagent 配置位置 | `[TBD - 例: .opencode/agent/ 或 opencode.json]` | opencode 文档 |
+| completion hook 配置位置 + 字段名 | `[TBD]` | opencode 文档（决定 hook 能否原生支持，否则降级 shell） |
+| 模型 | gpt-5.4 | 已定 |
+
+### D.7 DBA 协议
+
+| 配置项 | 值 | 来源 |
+|---|---|---|
+| DBA 联系人 | `[TBD]` | 团队 |
+| cron 部署位置 | `[TBD]` | DBA |
+| cron 频率 | 月度（每月 1 号 02:00 默认） | 可调 |
+| 删除条件 SQL | `DELETE FROM customer WHERE email LIKE 'e2e-%'` | 默认 |
+| 删除前是否备份 / 保留多久 | `[TBD]` | DBA |
+
+### D.8 接口/路由信息（D1 探索同时收集）
+
+| 配置项 | 值 | 来源 |
+|---|---|---|
+| 老 API 域名/前缀 | `[TBD]` | 老代码 + 网络抓包 |
+| 新 API 域名/前缀 | `[TBD]` | 新项目配置 |
+| 关键 API endpoint 列表 | `[TBD - 由 spec-extractor 提取]` | 老代码 |
+| 登录接口（老/新） | `[TBD]` | 探 |
+| 关键开户提交接口 | `[TBD]` | 探 |
+
+### D.9 配置文件模板
+
+D.1-D.8 都填完后，建议落到 `e2e/.env.local`（不入仓） + `e2e/config.yaml`（入仓）：
+
+```env
+# .env.local（含敏感信息，不入仓）
+OLD_SANDBOX_URL=https://...
+NEW_SIT_URL=https://...
+OLD_TEST_USER=...
+OLD_TEST_PASSWORD=...
+NEW_TEST_USER=...
+NEW_TEST_PASSWORD=...
+SANDBOX_KYC_BYPASS_COOKIE_NAME=...
+SANDBOX_KYC_BYPASS_VALUE=...
+TEST_ID_PREFIX=99999
+TEST_PHONE_PREFIX=19999
+```
+
+```yaml
+# config.yaml（入仓，无敏感信息）
+projects:
+  old_repo: /path/to/old-angular
+  new_repo: /path/to/new-react
+flows:
+  e2e:
+    - id: E2E-1
+      name: 个人/本地/年轻/进取主路径
+      old_route: /account/new
+      new_route: /account/new
+  single_step:
+    - id: S-1
+      target_step: 4
+      description: 风险偏好选高风险弹双录
+  branch:
+    - id: B-1
+      decision_point: step 1
+      branch_value: corporate
+      expected_route: /account/corporate/info
+```
+
+### D.10 配置就绪 checklist（D1 启动前最后一遍）
+
+- [ ] 项目路径（老/新）已 clone 到本地
+- [ ] UAT URL 可访问，测试账号能登录
+- [ ] 新 SIT URL 可访问
+- [ ] KYC/OCR/活体/反欺诈 bypass 在 UAT 上手工验证一次有效
+- [ ] 测试身份证段、手机号段在 UAT 上能成功创建 customer（手工跑一遍）
+- [ ] 15 个 case 清单写在 D.5
+- [ ] DBA 联系人 + cron 部署计划已对齐
+- [ ] opencode 当前版本的 hook/subagent 配置方式已查清（决定 D2 是用原生 hook 还是降级 shell）
+
+> **缺哪一项就停哪一项**，不要"先开始再说"。D1 起步前的 1 小时把这个 checklist 走一遍，能省掉后面 3 天的 debug 时间。
