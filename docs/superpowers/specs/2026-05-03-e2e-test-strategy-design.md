@@ -61,6 +61,10 @@
     每步含：
       - 多个 subTabs（页内 tab 切换）
       - 底部按钮: [Exit] [Save] [Back] [Next]
+        - **Save**: 显式保存草稿，不前进步骤
+        - **Next**: 保存 + 前进（Next 自带 Save 行为）
+        - **Back**: 返回上一步（字段保留）
+        - **Exit**: 退出流程（弹确认对话框）
             ↓
 1.5 提交 → Summary 页（生成 account）
 ```
@@ -89,8 +93,9 @@
 | Save / Resume 草稿 | 单步聚焦测试用 `seedToStep` 时优先复用 Save → Resume 而不是手工点完前 N 步 |
 | Prefill 分支 | 单独一个 case 验证"基于 customer 创建后字段确实 prefill" |
 | subTabs | PO 类要建模 `tabIndex` 和 subTab 切换；selector 命名带 tab 标识 |
-| 4 种底部按钮 | PO 提供统一方法 `clickExit()/clickSave()/clickBack()/clickNext()`，测试不直接点 |
-| 3 个 menu 各有视角 | maker dashboard 列表页是 **Pilot 1 最佳候选**（只读、无多步、最易跑通工具链） |
+| 4 种底部按钮 | PO 提供统一方法 `clickExit()/clickSave()/clickBack()/clickNext()`；**Next 内含 Save 行为**，测试 Save 时要分清"显式 Save"与"Next 触发的隐式 Save" |
+| 测试范围（重要） | **Account Opening 全流程**（主战场）+ **Maker Dashboard 仅 Resume 入口**（E2E-3 用）；**Checker Dashboard 不在测试范围** |
+| Pilot 1 候选 | Account Opening 1.1 入口选择页（Non-F2F / F2F 二选一，无 form、无 API 写、最简） |
 
 ---
 
@@ -105,6 +110,7 @@
 | Selector 策略 | testid 优先，role/label 兜底 |
 | 老系统访问 | 有沙箱 |
 | 流程结构 | 4-7 步多步骤、有 subTabs、Save/Resume 草稿、Prefill 分支（详见 §0 业务概览） |
+| 测试范围 | **Account Opening 全流程** + **Maker Dashboard 仅 Resume 入口**；**Checker Dashboard 不测** |
 | 测试运行环境 | opencode + gpt-5.4 |
 | 测试目标环境 | **本地 dev 为主**（迭代快），SIT 为辅（部署后验证）；新项目三个 menu 已全部上 SIT |
 | 时间预算 | 2 周（10 工作日） |
@@ -754,12 +760,12 @@ D1-D2       D3-D7            D8-D10
 
 ### 5.3 Pilot 策略（分两阶段）
 
-#### Pilot 1: 最简非开户流程（D1 下午）
+#### Pilot 1: Account Opening 1.1 入口选择页（D1 下午）
 - 目标: 验证整条工具链能跑通
-- **强烈推荐: Maker Dashboard 列表页 / Checker Dashboard 列表页** —— 只读、无多步、无草稿，最易跑通
-- 备选: Account Opening 入口的 1.1 选择页（Non-F2F / F2F 两选项的简单选择）
-- 选择标准: 步骤 ≤3 步、无外部依赖、能在 5 分钟内手工走通
-- 走完: 录制 → spec-extractor → spec-merger → test-generator → verify-on-old → 在新项目 SIT 跑通
+- **推荐: 1.1 选择 Non-F2F / F2F 这一步** —— 无 form、无 API 写入、纯路由跳转，最简
+- 备选: Maker Dashboard 列表页（只读，但要等列表 API 返回，复杂度略高）
+- 选择标准: 步骤 ≤2 步、无外部依赖、能在 5 分钟内手工走通
+- 走完: 录制 → spec-extractor → spec-merger → test-generator → verify-on-old → 在新项目本地跑通
 
 #### Pilot 2: 开户主路径（D2 整天）
 - 目标: 验证 hook 闭环 + 多步流程在工具链里能跑
@@ -1090,7 +1096,7 @@ hypothesis 字段必须是初步诊断，不能包含修复指令。
 | 单步聚焦 | S-4 | 1.3.1.2 customer applications 列表 | 显示该 customer 所有 applications，点击未完成项 resume | `[TBD]` | `[TBD]` | P1 | 候选 |
 | 单步聚焦 | S-5 | 1.3.2.2 Prefill 验证 | 基于 customer 创建后，多个字段确实预填正确（这是 prefill 这一关键功能的回归保护） | `[TBD]` | `[TBD]` | P1 | 候选 |
 | 单步聚焦 | S-6 | 任意中间步骤 subTabs 切换 | subTabs 切换状态保留、字段不丢失 | `[TBD]` | `[TBD]` | P1 | 候选 |
-| 单步聚焦 | S-7 | 底部 Save 按钮（保存草稿） | 任意中间步骤点 Save → 退出 → 列表能找到该草稿 | `[TBD]` | `[TBD]` | P1 | 候选 |
+| 单步聚焦 | S-7 | 显式 Save vs Next 隐式 Save 的区别 | 在中间步骤分别测：(a) 点 Save → 退出 → 列表能找到草稿且仍在当前步；(b) 点 Next → 列表草稿在下一步。Next 自带 Save 行为是已知业务规则 | `[TBD]` | `[TBD]` | P1 | 候选 |
 | 单步聚焦 | S-8 | 底部 Back 按钮 | 中间步骤点 Back → 上一步、字段保留 | `[TBD]` | `[TBD]` | P1 | 候选 |
 | 分支跳转 | B-1 | 1.1 选 Non-F2F vs F2F 步数差异 | 选择后流程步数不同（4 vs 7） | `[TBD]` | `[TBD]` | P2 | 候选 |
 | 分支跳转 | B-2 | 1.2 Sole vs Joint 子流程差异 | Joint 多了第二申请人相关字段 | `[TBD]` | `[TBD]` | P2 | 候选 |
@@ -1099,13 +1105,15 @@ hypothesis 字段必须是初步诊断，不能包含修复指令。
 
 > **D1 上午需做的事**：把 `[TBD]` 路由填上，把"候选"状态改成"已确认"或"已替换为 X"，并验证每条 case 在老 UAT 上能手工走通。
 
-#### Maker / Checker Dashboard 是否进 case 清单？
+#### 测试范围明确
 
-当前 15 个 case 全部围绕 Account Opening。Maker / Checker Dashboard 仅作为：
-- **Pilot 1 候选**（D1 验证工具链）
-- **E2E-3 的入口**（从 Maker Dashboard 列表 resume 草稿）
+| Menu | 测试覆盖 |
+|---|---|
+| 1. Account Opening | **全部覆盖**（15 个 case 全在这里） |
+| 2. Maker Dashboard | **仅覆盖 Resume 入口**（E2E-3 用 Maker Dashboard 列表点未完成 application → resume）；列表筛选/搜索/详情查看不测 |
+| 3. Checker Dashboard | **完全不测** |
 
-如果 Maker / Checker 自身的查看功能（搜索、筛选、详情）也需要 E2E 保护，需扩大总数到 20+。本 sprint 不覆盖，列入维护期 backlog。
+未来如需扩展（Maker/Checker 自身功能、Checker 审核动作等），列入维护期 backlog，**不进 2 周 sprint**。
 
 ### D.6 opencode 配置
 
