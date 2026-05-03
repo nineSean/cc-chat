@@ -1,0 +1,355 @@
+ ▐▛███▜▌   Claude Code v2.1.85
+▝▜█████▛▘  Sonnet 4.6 · API Usage Billing
+  ▘▘ ▝▝    ~/Repos/playground/cc-chat
+
+❯ https://baoyu.io/translations/2026-03-11/levels-of-agentic-engineering        
+根据这篇文章，分析各个级别如何达到？（特别是第六第七级）                        
+
+⏺ Fetch(https://baoyu.io/translations/2026-03-11/levels-of-agentic-engineering)
+  ⎿  Received 22.1KB (200 OK)
+
+⏺ 智能体工程 8 个等级的达成路径分析
+
+  第 1-2 级：基础工具层（入门门槛低）
+
+  - 第 1 级 Tab 补全：使用 Copilot 即可，几乎零门槛
+  - 第 2 级 智能体 IDE：切换到 Cursor/Windsurf 等工具，学会用聊天与代码库交互
+
+  第 3 级：上下文工程（核心基本功）
+
+  关键实践：
+  - 编写高质量的 .cursorrules / CLAUDE.md 规则文件
+  - 精心设计工具描述，让模型知道何时该用什么
+  - 管理对话历史，避免上下文污染
+  - 核心理念："每个 token 都要为自己的位置而战"
+
+  第 4 级：复合工程（建立迭代闭环）
+
+  四步循环：计划 → 委派 → 评估 → 沉淀
+
+  最关键的是"沉淀"——每次交互后把经验固化到规则文件中。LLM
+  无状态，必须靠外部文档持续积累智慧。
+
+  第 5 级：MCP 与技能扩展
+
+  让 AI 能操作外部系统：数据库、API、CI、浏览器自动化等。趋势是 CLI 工具优于 MCP
+   服务器（token 效率更高）。
+
+  ---
+  第 6 级：Harness Engineering（重点分析）
+
+  这一级的核心转变是：从"指导 AI 做事"变为"建立系统让 AI 自主运行"。
+
+  达成路径：
+
+  1. 建立回压机制（Backpressure）
+    - 类型系统（TypeScript strict mode）、全面的测试套件、ESLint/Prettier 等
+  linter
+    - Pre-commit 钩子自动拦截不合规代码
+    - 这些不是给人用的——是给 AI 用的"护栏"
+  2. 约束优于指令
+    - 不要写"请不要修改 auth 模块"，而是通过文件权限/沙箱直接禁止访问
+    - 定义清晰的信任域：隔离智能体、生成代码和密钥
+  3. 构建完整反馈循环
+    - AI 写代码 → 自动运行测试 → 测试失败 → AI 自动修复 → 再跑测试
+    - 参考 OpenAI Codex 的做法：集成 Chrome DevTools + 可观测性工具，让 AI
+  能验证自己的输出
+  4. 实际操作建议
+    - 把 CI/CD 管道打造成 AI 的"考试系统"
+    - 确保错误信息对 AI 友好（机器可读、包含足够上下文）
+    - 设计面向吞吐量而非完美的系统——允许 AI 快速试错
+
+  ▎ 本质：第 6 级是把"人盯着 AI"变成"系统盯着 AI"，人只需要关注系统本身的质量。
+
+  ---
+  第 7 级：后台智能体（重点分析）
+
+  核心转变：从"人和 AI 实时协作"变为"AI 异步独立工作，人事后审查"。
+
+  达成路径：
+
+  1. 放弃计划模式
+    - 文章明确说"计划模式正在消亡"——如果第 3-6
+  级的基础打好了，模型足够聪明能自己规划
+    - 前提是规则文件、测试、CI 都已完善
+  2. 实现 Ralph 循环
+    - 自主智能体反复运行：读 PRD → 写代码 → 跑测试 → 修复 → 直到全部通过
+    - 不需要人在中间干预
+  3. 引入编排智能体（Orchestrator）
+    - 解决的核心问题：时间浪费（协调、排序、验证、推动进度）
+    - 编排者负责拆任务、分配、验证结果、处理冲突
+  4. 用不同模型做不同工作
+    - 实现者和审查者必须解耦（用不同模型/实例），避免自我偏见
+    - 类似"群体智慧"——多个独立判断优于单一判断
+  5. 工具选择
+    - Dispatch：本地指挥中心，worker 在隔离环境运行
+    - Ramp Inspect：云端沙箱，适合长时间运行的任务
+    - 核心是让多个 AI 实例并行工作，互不干扰
+  6. 实际操作建议
+    - 从单个后台任务开始，逐步扩展到多任务并行
+    - 确保每个 worker 有独立的 git worktree/分支
+    - 建立 PR 审查流程作为最终质量关卡
+
+  ▎ 本质：第 7 级是把 AI 从"助手"变成"员工"——你给它任务，它自己干完交 PR，你只管
+   review。
+
+  ---
+  关键洞察
+
+  文章的核心观点是每一级都依赖前面的级别：
+
+  第 6-7 级能工作的前提：
+  ├── 第 3 级：优质的上下文/规则文件
+  ├── 第 4 级：持续沉淀经验到规则中
+  ├── 第 5 级：AI 能操作必要的外部工具
+  └── 第 6 级：完整的自动化反馈循环（测试、CI、linter）
+
+  文章最后也务实地指出：第 8 级（自主团队）目前经济上不划算，第 7
+  级才是当前最大的实际杠杆点。
+
+❯ 请搜索第六、第七集网络上相关的手把手教程，然后总结给我。                      
+
+❯ 请续续。                                                                      
+  ⎿  Please run /login · API Error: 403 status code (no body)
+
+❯ 请继续。                                                                      
+  ⎿  Please run /login · API Error: 403 status code (no body)
+
+❯ 请继续。                                                                      
+  ⎿  Please run /login · API Error: 403 status code (no body)
+
+❯ 请继续。                                                                      
+
+⏺ Web Search("Harness Engineering level 6 agentic AI tutorial 2025 2026")
+  ⎿  Did 1 search in 14s
+
+⏺ Web Search("level 7 background agents autonomous AI tutorial hands-on")
+  ⎿  Did 1 search in 12s
+
+⏺ Web Search("AI agent backpressure mechanisms testing CI pipeline feedback
+            loop")
+  ⎿  Did 1 search in 11s
+
+⏺ Web Search("orchestrator agent pattern multi-agent system coordination
+            tutorial")
+  ⎿  Did 1 search in 16s
+
+⏺ Web Search("Dispatch framework background worker agents local orchestration")
+  ⎿  Did 1 search in 20s
+
+⏺ 第六级和第七级智能体工程网络教程总结
+
+  第 6 级：Harness Engineering 教程
+
+  核心教学资源
+
+  1. OpenAI 官方指南 - https://openai.com/index/harness-engineering/
+    - OpenAI 用一百万行代码构建无人工编写的系统，包括应用逻辑、文档、CI
+  配置、可观测性
+  2. Anthropic 实践指南 - https://www.anthropic.com/engineering/effective-harnes
+  ses-for-long-running-agents
+    - Claude Agent SDK 官方文档，包含上下文管理和压缩能力
+  3. Staff 工程师完整指南 - https://vitthalmirji.com/2026/02/build-the-harness-n
+  ot-the-code-a-staff/principal-engineers-guide-to-ai-agent-systems/
+    - 实用教程：如何设计可靠的 AI 智能体系统
+    - 涵盖技能、shell 执行、上下文压缩，包含 OpenAI Codex 和 Claude Code
+  生态示例
+
+  关键技术实现
+
+  建立反馈回压机制（Backpressure）
+
+  根据
+  https://boundaryml.com/podcast/2026-02-10-agentic-backpressure-deep-dive：
+
+  - 自动化反馈循环：不是手动指导，而是让系统自动约束 AI
+  类型系统（TypeScript strict）
+  → 完整测试套件
+  → ESLint/Prettier linter
+  → Pre-commit 钩子
+  → 自动化验证
+  - 自修复 CI/CD 管道 - https://dagger.io/blog/automate-your-ci-fixes-self-heali
+  ng-pipelines-with-ai-agents/
+    - 流程：代码失败 → AI 自动修复 → 验证修复 → 生成 PR
+    - 参考：https://www.elastic.co/search-labs/blog/ci-pipelines-claude-ai-agent
+
+  建立约束而非指令
+
+  关键差异：
+  - ❌ 指令方式："请不要修改 auth 模块"
+  - ✅ 约束方式：直接禁止访问（文件权限、沙箱隔离）
+
+  ---
+  第 7 级：后台智能体（Background Agents）教程
+
+  核心教学资源
+
+  1. 实战案例 - https://www.theunwindai.com/p/how-i-built-an-autonomous-ai-agent
+  -team-that-runs-24-7
+    - 完整步骤教程：使用 OpenClaw 管理后台智能体
+  2. AI 智能体完整手册 -
+  https://www.freecodecamp.org/news/the-agentic-ai-handbook/
+    - FreeCodeCamp 提供的从零开始教程
+  3. Coursera 实践课程 -
+  https://www.coursera.org/learn/building-autonomous-ai-agents
+    - 手把手实践课程，从设计到部署端到端流程
+
+  关键技术：编排智能体模式
+
+  根据 https://learn.microsoft.com/en-us/azure/architecture/ai-ml/guide/ai-agent
+  -design-patterns 和
+  https://openai.github.io/openai-agents-python/multi_agent/：
+
+  五大编排模式对比
+
+  ┌─────────────────────┬────────────────────┬──────────────────────┐
+  │        模式         │        特点        │       适用场景       │
+  ├─────────────────────┼────────────────────┼──────────────────────┤
+  │ Orchestrator-Worker │ 中央协调，扇出工作 │ 需要严格控制的流程   │
+  ├─────────────────────┼────────────────────┼──────────────────────┤
+  │ Hierarchical        │ 树形委派结构       │ 复杂多层级任务       │
+  ├─────────────────────┼────────────────────┼──────────────────────┤
+  │ Swarm               │ 去中心化涌现       │ 自组织协作（易失控） │
+  ├─────────────────────┼────────────────────┼──────────────────────┤
+  │ Mesh                │ 点对点通信         │ 高度独立的子任务     │
+  ├─────────────────────┼────────────────────┼──────────────────────┤
+  │ Pipeline            │ 顺序阶段处理       │ 线性工作流           │
+  └─────────────────────┴────────────────────┴──────────────────────┘
+
+  推荐架构：Supervisor 模式（来自
+  https://aws.amazon.com/blogs/machine-learning/customize-agent-workflows-with-a
+  dvanced-orchestration-techniques-using-strands-agents/）
+
+  主智能体（Supervisor）
+  ├── 接收用户请求
+  ├── 分解成子任务
+  ├── 分配给专用智能体
+  ├── 监控进度
+  ├── 验证输出
+  └── 综合最终答案
+
+  ---
+  第 7 级：实战工具 - Dispatch 框架
+
+  什么是 Dispatch？
+
+  https://github.com/bassimeledath/dispatch 和
+  https://bassimeledath-dispatch.mintlify.app/introduction
+
+  Dispatch 是 Claude Code 的一个 Skill，把你的会话变成轻量级编排器：
+
+  Claude Code 主会话（计划分配）
+      ↓
+    /dispatch
+      ↓
+  并行启动多个后台工作者
+  ├── Worker 1（完整上下文）
+  ├── Worker 2（完整上下文）
+  └── Worker 3（完整上下文）
+
+  核心优势：
+  - 每个 worker 有独立的完整上下文窗口
+  - 任务并行执行（不是顺序）
+  - 5 个任务：从 45 分钟 → 最长任务的时间
+  - 主会话保持精简（仅做编排，不做实现）
+
+  关键特性
+
+  根据 https://www.bassimeledath.com/blog/dispatch：
+
+  1. Worker 隔离执行
+    - 每个 worker 在独立环境运行
+    - 不互相干扰
+    - 支持多种 CLI（Claude Code、Cursor、Codex 等）
+  2. 问题浮出到你
+    - Worker 遇到问题时主动提问
+    - 不需要轮询，不会丢失上下文
+  3. 错误恢复
+    - 编排器跟踪所有 worker
+    - 报告完成状态
+    - 提供恢复选项
+
+  类似工具
+
+  - https://github.com/jayminwest/overstory - 多智能体编排，支持 Claude
+  Code、Pi、Pi 等
+  - https://github.com/ruvnet/agentic-flow - 低成本模型切换，支持云部署
+
+  ---
+  快速对比：第 6 级 vs 第 7 级
+
+  ┌──────────┬──────────────────────┬───────────────────────┐
+  │   维度   │  第 6 级（Harness）  │ 第 7 级（后台智能体） │
+  ├──────────┼──────────────────────┼───────────────────────┤
+  │ 人的角色 │ 全程监督系统         │ 事后审查 PR           │
+  ├──────────┼──────────────────────┼───────────────────────┤
+  │ 执行方式 │ 单个智能体自修复循环 │ 多智能体异步并行      │
+  ├──────────┼──────────────────────┼───────────────────────┤
+  │ 时间模式 │ 同步                 │ 异步                  │
+  ├──────────┼──────────────────────┼───────────────────────┤
+  │ 关键工具 │ 测试、CI、linter     │ 编排器、dispatcher    │
+  ├──────────┼──────────────────────┼───────────────────────┤
+  │ 难点     │ 建立完整反馈循环     │ 协调多个独立智能体    │
+  ├──────────┼──────────────────────┼───────────────────────┤
+  │ 实现模式 │ Ralph 循环（自修复） │ 编排-工作者模式       │
+  └──────────┴──────────────────────┴───────────────────────┘
+
+  ---
+  实操建议
+
+  第 6 级从这里开始：
+  1. 在你的项目上打开 TypeScript strict mode
+  2. 写全面的测试套件
+  3. 配置 pre-commit 钩子（husky）
+  4. 在 CI 上接上 AI 错误修复任务
+
+  第 7 级从这里开始：
+  1. 用 /dispatch 把任务分配给多个 worker
+  2. 定义清晰的任务分解规则（什么交给哪个专家）
+  3. 让编排器负责验证、排序、推进进度
+  4. 用不同模型做实现者和审查者（避免自我偏见）
+
+  ---
+  总结
+
+  第 6 级的教程重点是建立系统的约束和反馈，第 7
+  级则是利用编排模式实现真正的后台自主工作。两者的共同前提是第 3-5
+  级的基础工作（规则文件、工具、MCP）都已完善。
+
+  Sources:
+  - https://openai.com/index/harness-engineering/
+  - https://www.anthropic.com/engineering/effective-harnesses-for-long-running-a
+  gents
+  - https://vitthalmirji.com/2026/02/build-the-harness-not-the-code-a-staff/prin
+  cipal-engineers-guide-to-ai-agent-systems/
+  - https://boundaryml.com/podcast/2026-02-10-agentic-backpressure-deep-dive
+  - https://dagger.io/blog/automate-your-ci-fixes-self-healing-pipelines-with-ai
+  -agents/
+  - https://www.theunwindai.com/p/how-i-built-an-autonomous-ai-agent-team-that-r
+  uns-24-7
+  - https://www.coursera.org/learn/building-autonomous-ai-agents
+  - https://learn.microsoft.com/en-us/azure/architecture/ai-ml/guide/ai-agent-de
+  sign-patterns
+  - https://github.com/bassimeledath/dispatch
+  - https://bassimeledath-dispatch.mintlify.app/introduction
+
+❯ /export                                                                       
+  ⎿  Conversation exported to: /Users/ninesean/Repos/playground/cc-chat/2026-03-
+     21-104238-httpsbaoyuiotranslations2026-03-11levels-of.txt
+
+❯ bash                                                                          
+  ⎿  Please run /login · API Error: 403 status code (no body)
+
+❯ 当前如何执行bash指令                                                          
+  ⎿  Interrupted · What should Claude do instead?
+
+❯ /statusline                                                                   
+  ⎿  Please run /login · API Error: 403 status code (no body)
+
+❯ /model                                                                        
+  ⎿  Set model to Sonnet 4.6 (default)
+
+❯ /statusline                                                                     ⎿  Interrupted · What should Claude do instead?
+
+❯ /model opus                                                                   
+  ⎿  Set model to Opus 4.6

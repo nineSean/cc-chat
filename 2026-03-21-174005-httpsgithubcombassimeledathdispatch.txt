@@ -1,0 +1,359 @@
+ ▐▛███▜▌   Claude Code v2.1.81
+▝▜█████▛▘  Sonnet 4.6 · API Usage Billing
+  ▘▘ ▝▝    ~/Repos/playground/cc-chat
+
+❯ https://github.com/bassimeledath/dispatch                                     
+请详细分析这个代码库，让我学习原理和使用                                        
+
+⏺ 我来详细分析这个代码库。先获取仓库信息和代码结构。
+
+⏺ Explore(分析 dispatch 代码库)
+  ⎿  Done (33 tool uses · 28.5k tokens · 3m 52s)
+  (ctrl+o to expand)
+
+⏺ Dispatch 代码库深度分析
+
+  这是一个 Claude Code 技能（Skill），核心理念是作为 上下文窗口倍增器——将你的主
+  会话变成一个轻量编排器，把实际工作分派给多个并行的后台 worker，每个 worker
+  都有独立的新鲜上下文窗口。
+
+  ---
+  核心理念
+
+  ▎ "调度器永远不做实际工作。它只负责规划、委派和追踪。"
+
+  传统模式下，一个 AI 会话做所有事，上下文很快耗尽。Dispatch
+  反转了这个模型：一个轻量调度器 + N 个并行独立 worker。
+
+  ---
+  项目结构
+
+  dispatch/
+  ├── skills/dispatch/
+  │   ├── SKILL.md              # 核心实现规范（最重要的文件）
+  │   └── references/           # 详细参考文档
+  │       ├── config-example.yaml
+  │       ├── ipc-protocol.md   # 进程间通信协议
+  │       ├── first-run-setup.md
+  │       └── proactive-recovery.md
+  ├── docs/
+  │   ├── architecture.md       # 架构设计
+  │   ├── config.md             # 配置说明
+  │   └── ipc-protocol.md       # IPC 协议规范
+  ├── .github/workflows/
+  │   └── update-docs.yml       # CI 自动更新文档
+  └── CLAUDE.md                 # 开发规范
+
+  关键点：这不是传统的源代码项目，而是一个文档驱动的 Skill 定义，实现规范写在
+  SKILL.md 里，由 Claude Code 运行时解释执行。
+
+  ---
+  三大核心架构
+
+  1. Host-Worker 模型
+
+  ┌──────────────┐     spawn     ┌──────────┐
+  │   Dispatcher  │──────────────→│ Worker 1  │  (fresh context)
+  │  (主会话)     │──────────────→│ Worker 2  │  (fresh context)
+  │  只做编排     │──────────────→│ Worker 3  │  (fresh context)
+  └──────────────┘               └──────────┘
+
+  - Dispatcher（调度器）：运行在用户的 Claude Code 会话中，只做规划/委派/追踪
+  - Worker（工作者）：通过任意兼容 CLI（Claude
+  Code、Cursor、Codex）启动，拥有独立上下文
+  - Worker 是一次性的：每个任务都是全新的上下文，没有状态持久化需求
+
+  2. 基于文件的状态管理（Plan-as-State-Machine）
+
+  任务状态存在 .dispatch/tasks/<task-id>/plan.md 文件中：
+
+  ## Auth Module Implementation
+  - [x] Set up database schema          ← 已完成
+  - [ ] Implement JWT token generation   ← 待处理
+  - [?] Choose OAuth provider            ← 被阻塞（等待用户输入）
+  - [!] Fix rate limiting bug            ← 出错
+
+  没有数据库，没有 API——纯文件读写，既是状态机又是人类可读的进度报告。
+
+  3. 双向 IPC 协议（进程间通信）
+
+  这是最精妙的设计——Worker 遇到问题时可以向用户提问：
+
+  Worker 遇到阻塞
+    ↓ 写入 .dispatch/tasks/<id>/ipc/001.question
+  Monitor 检测到
+    ↓ 优雅退出，通知调度器
+  调度器呈现问题给用户
+    ↓ 用户回答
+  调度器写入 .dispatch/tasks/<id>/ipc/001.answer （原子写入）
+    ↓
+  Monitor 重启，Worker 检测到答案
+    ↓ 写入 001.done
+  Worker 继续执行，不丢失上下文
+
+  安全保障：
+  - 原子写入：先写临时文件再 mv，防止读到半写状态
+  - 超时机制：~3 分钟无响应 → worker 将上下文 dump 到 context.md，标记 [?]
+  - 重启安全：问题文件持久化在磁盘，调度器重启后能恢复
+
+  ---
+  工作流程详解
+
+  用户: /dispatch "构建认证模块"
+    ↓
+  1. 读取 ~/.dispatch/config.yaml 配置
+    ↓
+  2. 创建 .dispatch/tasks/<task-id>/plan.md（具体检查清单）
+    ↓
+  3. 一次性搭建脚手架：
+     - 创建 ipc/ 目录
+     - 创建 prompt.md（任务详情）
+     - 创建 worker + monitor 包装脚本
+    ↓
+  4. 通过 nohup 后台启动 worker + monitor
+    ↓
+  5. 立即返回任务 ID，主会话恢复控制
+
+  ---
+  多后端 & 模型配置
+
+  # ~/.dispatch/config.yaml
+  default: opus
+  backends:
+    claude: "env -u CLAUDE_CODE_ENTRYPOINT claude -p 
+  --dangerously-skip-permissions"
+    cursor: "agent -p --force --workspace $(pwd)"
+    codex: "codex --auto-approve --sandbox"
+  models:
+    opus:   { backend: claude }
+    sonnet: { backend: claude }
+    gpt-4o: { backend: cursor }
+  aliases:
+    security-reviewer: { model: opus, prompt: "Focus on OWASP compliance..." }
+
+  灵活的模型混用：可以让 Opus 做安全审计，GPT-4o 跑测试，Sonnet
+  写文档——每个任务独立选择模型。
+
+  首次运行时会自动发现可用的 CLI 和模型，生成默认配置。
+
+  ---
+  故障恢复机制
+
+  当 Worker CLI 崩溃时：
+  1. 系统通过返回码检测到失败
+  2. 通知用户具体哪个工具出了问题
+  3. 从配置中列出可替代的模型/后端
+  4. 用户选择替代方案
+  5. 用新 worker 重试任务
+
+  ---
+  设计哲学总结
+
+  ┌────────┬────────────────────────────────┐
+  │  原则  │            实现方式            │
+  ├────────┼────────────────────────────────┤
+  │ 简单性 │ 文件系统作为状态存储，无数据库 │
+  ├────────┼────────────────────────────────┤
+  │ 并行性 │ Worker 完全独立执行            │
+  ├────────┼────────────────────────────────┤
+  │ 交互性 │ IPC 协议支持阻塞式提问         │
+  ├────────┼────────────────────────────────┤
+  │ 灵活性 │ 混合任意模型和后端             │
+  ├────────┼────────────────────────────────┤
+  │ 韧性   │ 原子写入、优雅超时、问题持久化 │
+  └────────┴────────────────────────────────┘
+
+  ---
+  如何使用
+
+  1. 安装：将 skills/dispatch 目录复制到你的项目 .claude/skills/ 下
+  2. 首次运行：/dispatch "你的任务描述" → 自动检测可用 CLI 并生成配置
+  3. 查看进度：直接查看 .dispatch/tasks/<id>/plan.md
+  4. 回答问题：调度器会在主会话中转发 worker 的提问
+
+  这个项目展示了一种很优雅的 分布式 AI 编排范式——用最简单的机制（文件系统 +
+  后台进程）实现了复杂的多代理协调。非常值得学习其文件即状态机和基于文件的 IPC
+  的设计思想。
+
+✻ Sautéed for 4m 55s
+
+❯ cc skill 的安装有没更优雅的方式？                                             
+
+⏺ claude-code-guide(查询 CC skill 安装方式)
+  ⎿  Done (5 tool uses · 48.1k tokens · 1m 23s)
+  (ctrl+o to expand)
+
+⏺ 有的，Claude Code 提供了 Plugin + Marketplace 体系，比手动拷贝优雅得多。
+
+  ---
+  方式一：手动放置（最简单但不优雅）
+
+  # 克隆到项目的 .claude/skills/ 下
+  git clone https://github.com/bassimeledath/dispatch .claude/skills/dispatch
+
+  手动管理，无法自动更新。
+
+  ---
+  方式二：Plugin Marketplace（推荐）
+
+  这是 Claude Code 的官方分发机制：
+
+  # 1. 添加 marketplace（指向包含 plugin 的 GitHub 仓库）
+  /plugin marketplace add bassimeledath/dispatch
+
+  # 2. 安装 plugin
+  /plugin install dispatch@bassimeledath/dispatch
+
+  # 3. 使用
+  /dispatch "你的任务"
+
+  优势：
+  - 支持版本控制和自动更新
+  - 命名空间隔离，不会冲突
+  - 支持 GitHub / GitLab / npm / 本地路径等多种来源
+
+  ---
+  方式三：个人全局 Skill
+
+  如果你想在所有项目中都能用：
+
+  # 放到全局 skills 目录
+  ~/.claude/skills/dispatch/SKILL.md
+
+  所有项目都能直接 /dispatch 调用。
+
+  ---
+  方式四：启动时指定 plugin 目录
+
+  claude --plugin-dir ./path/to/dispatch
+
+  适合开发调试时临时加载。
+
+  ---
+  三个作用域对比
+
+  ┌──────────┬──────────────────────────────────┬──────────────────────────┐
+  │  作用域  │               路径               │         适用场景         │
+  ├──────────┼──────────────────────────────────┼──────────────────────────┤
+  │ 项目级   │ .claude/skills/<name>/SKILL.md   │ 团队共享，随项目走       │
+  ├──────────┼──────────────────────────────────┼──────────────────────────┤
+  │ 个人全局 │ ~/.claude/skills/<name>/SKILL.md │ 个人工具箱，所有项目可用 │
+  ├──────────┼──────────────────────────────────┼──────────────────────────┤
+  │ Plugin   │ 通过 /plugin install             │ 第三方分发，版本管理     │
+  └──────────┴──────────────────────────────────┴──────────────────────────┘
+
+  ---
+  对于 dispatch 这个项目，最优雅的方式取决于它是否已经发布为标准的 Plugin
+  格式（包含 .claude-plugin/plugin.json 和 marketplace.json）。如果有，直接
+  /plugin marketplace add 即可。如果没有，放到 ~/.claude/skills/ 做全局 skill
+  是最实用的选择。
+
+✻ Cogitated for 2m 3s
+
+! tree ~/.claude                                                                
+  ⎿  /Users/ninesean/.claude
+     ├── CLAUDE.md
+     ├── backups
+     … +34 lines (ctrl+o to expand)
+
+! cat ~/.claude/CLAUDE.md                                                       
+  ⎿  - 倾向于使用中文对话
+
+❯  通过 /plugin install 的 skill 是什么级别的？                                 
+
+⏺ 通过 /plugin install 安装的 skill 存储在 ~/.claude/plugins/
+  下，属于用户全局级别——所有项目都能使用。
+
+  从你的目录结构可以看到相关文件：
+
+  ~/.claude/plugins/
+  ├── blocklist.json
+  └── installed_plugins.json
+
+  installed_plugins.json 记录了已安装的插件信息，blocklist.json
+  用于屏蔽不想用的插件。
+
+  ---
+  三个级别总结
+
+  ┌──────────┬──────────────────────────────────────┬──────────────┐
+  │   级别   │                 路径                 │    谁能用    │
+  ├──────────┼──────────────────────────────────────┼──────────────┤
+  │ 项目级   │ <project>/.claude/skills/            │ 仅该项目     │
+  ├──────────┼──────────────────────────────────────┼──────────────┤
+  │ 用户全局 │ ~/.claude/skills/ 或 /plugin install │ 你的所有项目 │
+  ├──────────┼──────────────────────────────────────┼──────────────┤
+  │ 企业管理 │ 通过 managed settings 推送           │ 组织内所有人 │
+  └──────────┴──────────────────────────────────────┴──────────────┘
+
+  Plugin 安装的 skill 和手动放在 ~/.claude/skills/ 的效果类似，都是全局可用，但
+  plugin 额外提供了版本管理、来源追踪和统一的安装/卸载/更新机制。
+
+❯ 那如何通过 /plugin 命令搜索查找 skill ？                                      
+
+⏺ claude-code-guide(查询 plugin 搜索命令)
+  ⎿  Done (3 tool uses · 32.2k tokens · 58s)
+  (ctrl+o to expand)
+
+⏺ 没有专门的 /plugin search 命令，但有交互式浏览界面。
+
+  浏览发现 Plugin
+
+  /plugin
+
+  打开交互式管理界面，有几个 Tab：
+
+  ┌──────────────┬────────────────────────────────────────┐
+  │     Tab      │                  功能                  │
+  ├──────────────┼────────────────────────────────────────┤
+  │ Discover     │ 浏览所有可用插件（支持输入关键词过滤） │
+  ├──────────────┼────────────────────────────────────────┤
+  │ Installed    │ 查看已安装的插件                       │
+  ├──────────────┼────────────────────────────────────────┤
+  │ Marketplaces │ 管理已添加的市场源                     │
+  ├──────────────┼────────────────────────────────────────┤
+  │ Errors       │ 查看插件加载错误                       │
+  └──────────────┴────────────────────────────────────────┘
+
+  完整的 /plugin 子命令
+
+  # 交互式浏览
+  /plugin                                    # 打开管理界面
+
+  # 安装/卸载
+  /plugin install <name>@<marketplace>       # 安装
+  /plugin uninstall <name>                   # 卸载
+  /plugin update <name>                      # 更新
+  /plugin enable/disable <name>              # 启用/禁用
+
+  # 市场管理
+  /plugin marketplace add <source>           # 添加市场源
+  /plugin marketplace list                   # 列出所有市场
+  /plugin marketplace update <name>          # 刷新市场
+  /plugin marketplace remove <name>          # 移除市场
+
+  # 调试
+  /plugin validate                           # 验证插件配置
+  /reload-plugins                            # 重载所有插件
+
+  官方市场
+
+  Claude Code 自带一个官方市场 claude-plugins-official，包含：
+
+  - 代码智能：Python/TS/Rust/Go 等语言的 LSP 插件
+  - 外部集成：GitHub、Slack、Linear、Notion、Sentry 等 MCP 服务器
+  - 开发工作流：commit 工具、PR review、Agent SDK 等
+  - 输出风格：教学模式、学习模式等
+
+  直接 /plugin → Discover Tab 就能浏览和安装。
+
+  添加第三方市场
+
+  如果想安装 dispatch 这类非官方插件，需要先添加其市场源：
+
+  /plugin marketplace add bassimeledath/dispatch
+
+  前提是该仓库提供了 .claude-plugin/marketplace.json
+  配置文件。如果没有，就只能手动放到 ~/.claude/skills/ 下了。
+
+✻ Baked for 1m 35s
