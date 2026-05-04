@@ -6,11 +6,13 @@
 
 **Architecture:** Hybrid Cross-Check（QA 录制 + AI 扫老代码 → spec → PO 双版本测试）。文本证据（DOM excerpt / console / network）替代 screenshot 适配公司 LLM 无多模态约束。Hook 闭环 max=5 次防死循环。
 
-**Tech Stack:** Playwright 1.x (TypeScript) / opencode + gpt-5.4 / Node 20+ / 新 React 项目仓库的 `e2e/` 子目录
+**Tech Stack:** Playwright 1.x (TypeScript) / opencode + gpt-5.4 / Node 20+ / 新加坡 React 项目子目录 `xx-sg-hbsp/`
 
 **前置约定**:
-- 所有 `Files: Create/Modify` 路径都是 **新 React 项目仓库根目录** 下的相对路径（如 `e2e/...`）
-- 命令在 **新 React 项目仓库根目录** 跑
+- **路径前缀**: 项目按国家组织，新加坡子目录是 `xx-sg-hbsp/`。本 plan 中所有 `e2e/...` 与 `.opencode/...` 路径都相对于 `xx-sg-hbsp/`。例如 plan 写 `e2e/playwright.config.ts`，实际路径是 `xx-sg-hbsp/e2e/playwright.config.ts`。
+- **命令在 `xx-sg-hbsp/` 下执行**（每个 Task 起手默认 `cd xx-sg-hbsp` 一次；后续命令不重复 cd）。
+- **`.opencode/` 在 `xx-sg-hbsp/.opencode/`**，**不在 `e2e/` 内** —— opencode 默认从工作目录向上查找配置，放在项目根级让无论 e2e 还是业务代码上下文都被识别。
+- **Hook 模式**: focus.json 含 `mode` 字段（`auto`/`debug`/`off`）。`auto` 时 hook 闭环开启；`debug`/`off` 时 hook 跳过，人工接管调试。
 - Pilot 1 候选: Account Opening 1.1 入口选择页（即 S-1）
 - Pilot 2 候选: E2E-1（个人 / Non-F2F / Sole 主路径）
 - 设计文档参照: `docs/superpowers/specs/2026-05-03-e2e-test-strategy-design.md`（在 cc-chat 仓库；engineer 应同时打开此文档）
@@ -20,69 +22,68 @@
 
 ## File Structure
 
-实施后将在新 React 项目仓库根目录下产生：
+实施后将在 **`xx-sg-hbsp/`** 子目录下产生：
 
 ```
-e2e/
-├── playwright.config.ts                   # Playwright 主配置
-├── tsconfig.json                          # 测试代码独立 tsconfig
-├── package.json                           # 如果 e2e 不与项目共享 deps
+xx-sg-hbsp/                                    # 新加坡 React 项目根
+├── package.json                               # 加 e2e:* scripts
+├── src/                                       # 业务代码（已存在）
+├── .gitignore                                 # 追加忽略项
 │
-├── fixtures/                              # 老沙箱 Oracle 数据
-│   └── (各 flow 的 .json，verify-on-old 后落地)
+├── .opencode/                                 # opencode 配置（项目级，非 e2e/ 内）
+│   ├── agent/
+│   │   ├── spec-extractor.md
+│   │   ├── spec-merger.md
+│   │   ├── test-generator.md
+│   │   └── test-runner.md
+│   ├── focus.json                             # 当前关注 case + mode 开关
+│   └── hook-config.json                       # completion hook 配置
 │
-├── data/
-│   ├── test-data-factory.ts               # 唯一测试数据生成
-│   └── accounts.ts                        # 测试账号映射表
-│
-├── pages/                                 # PO 类（业务命名）
-│   ├── BasePage.ts                        # 公共: login(), navigateTo()
-│   ├── AccountOpeningEntryPage.ts         # 1.1 入口选择
-│   ├── AccountOpeningTypePage.ts          # 1.2 账户类型
-│   ├── AccountOpeningCustomerSearchPage.ts # 1.3 search 入口
-│   ├── AccountOpeningFlow.ts              # 1.4 多步主流程
-│   ├── AccountOpeningSummaryPage.ts       # 1.5 summary
-│   └── MakerDashboardPage.ts              # menu 2 仅 resume 入口
-│
-├── helpers/
-│   ├── text-evidence.ts                   # 文本证据自动 dump fixture
-│   └── login.ts                           # 共享登录 helper
-│
-├── tests/
-│   ├── verify-on-old/                     # 一次性 verify（mode=old）
-│   │   └── (各 flow 的 .spec.ts，verify 通过后归档)
-│   └── new/                               # 主战场（mode=new，长期跑）
-│       └── (各 flow 的 .spec.ts)
-│
-├── recorded/                              # codegen 原料，不进 CI
-│   └── <flow>/
-│       ├── raw.ts
-│       ├── network.json
-│       ├── dom-snapshot.html
-│       └── meta.json
-│
-├── specs/                                 # AI 合并后的业务规格
-│   └── <flow>.spec.md
-│
-├── scripts/
-│   ├── record-with-network.mjs            # 包 codegen + 抓网络
-│   ├── run-case.mjs                       # npm run e2e:case 入口
-│   ├── run-by-spec.mjs                    # 按业务名跑
-│   └── run-case-with-fallback.sh          # Hook 降级版 shell wrapper
-│
-└── .opencode/
-    ├── agent/
-    │   ├── spec-extractor.md
-    │   ├── spec-merger.md
-    │   ├── test-generator.md
-    │   └── test-runner.md
-    ├── focus.json                         # 当前关注 case
-    └── hook-config.json                   # completion hook 配置
+└── e2e/                                       # 测试代码
+    ├── playwright.config.ts                   # Playwright 主配置
+    ├── tsconfig.json                          # 测试代码独立 tsconfig
+    ├── .env.example                           # 复制为 .env.local
+    │
+    ├── fixtures/                              # 老沙箱 Oracle 数据
+    │   └── (各 flow 的 .json，verify-on-old 后落地)
+    │
+    ├── data/
+    │   ├── test-data-factory.ts               # 唯一测试数据生成
+    │   └── accounts.ts                        # 测试账号映射表
+    │
+    ├── pages/                                 # PO 类（业务命名）
+    │   ├── AccountOpeningEntryPage.ts         # 1.1 入口选择
+    │   ├── AccountOpeningTypePage.ts          # 1.2 账户类型
+    │   ├── AccountOpeningCustomerSearchPage.ts # 1.3 search 入口
+    │   ├── AccountOpeningFlow.ts              # 1.4 多步主流程
+    │   ├── AccountOpeningSummaryPage.ts       # 1.5 summary
+    │   └── MakerDashboardPage.ts              # menu 2 仅 resume 入口
+    │
+    ├── helpers/
+    │   ├── text-evidence.ts                   # 文本证据自动 dump fixture
+    │   └── login.ts                           # 共享登录 helper
+    │
+    ├── tests/
+    │   ├── verify-on-old/                     # 一次性 verify（mode=old）
+    │   └── new/                               # 主战场（mode=new，长期跑）
+    │
+    ├── recorded/                              # codegen 原料，不进 CI
+    │   └── <flow>/{raw.ts, network.json, dom-snapshot.html, meta.json}
+    │
+    ├── specs/                                 # AI 合并后的业务规格
+    │
+    └── scripts/
+        ├── record-with-network.mjs            # 包 codegen + 抓网络
+        ├── run-case.mjs                       # npm run e2e:case 入口
+        ├── run-by-spec.mjs                    # 按业务名跑
+        ├── set-mode.mjs                       # 切 focus.mode (auto/debug/off)
+        ├── set-focus.mjs                      # 写当前关注 case
+        └── run-case-with-fallback.sh          # Hook 降级版 shell wrapper
 ```
 
-新项目根目录还会修改:
-- `package.json`: 加 e2e:* 系列 scripts
-- `.gitignore`: 加 `recorded/`, `test-results/`, `e2e/.env.local`
+`xx-sg-hbsp/` 还会修改:
+- `package.json`: 加 e2e:* + e2e:debug:on/off + e2e:focus 系列 scripts
+- `.gitignore`: 加 `e2e/recorded/`, `test-results/`, `e2e/.env.local`
 
 ---
 
@@ -138,6 +139,7 @@ git commit --allow-empty -m "chore: e2e sprint baseline (D-1 pre-flight done)"
 - [ ] **Step 1: 安装依赖**
 
 ```bash
+cd xx-sg-hbsp                # 所有后续命令都在这里跑（每个 task 起手都先 cd）
 npm install -D @playwright/test@latest typescript@latest
 npx playwright install chromium
 ```
@@ -145,7 +147,8 @@ npx playwright install chromium
 - [ ] **Step 2: 创建目录树**
 
 ```bash
-mkdir -p e2e/{pages,data,helpers,tests/verify-on-old,tests/new,recorded,specs,fixtures,scripts,.opencode/agent}
+mkdir -p e2e/{pages,data,helpers,tests/verify-on-old,tests/new,recorded,specs,fixtures,scripts}
+mkdir -p .opencode/agent      # 注意：.opencode 在项目根，不在 e2e/ 内
 ```
 
 - [ ] **Step 3: 写 `e2e/playwright.config.ts`**
@@ -226,12 +229,15 @@ git commit -m "chore(e2e): scaffold Playwright project + tsconfig"
 - [ ] **Step 1: 在 `package.json` 的 `scripts` 里加**
 
 ```json
-"e2e:smoke":   "playwright test --config=e2e/playwright.config.ts tests/new",
-"e2e:case":    "node e2e/scripts/run-case.mjs",
-"e2e:by-spec": "node e2e/scripts/run-by-spec.mjs",
-"e2e:debug":   "PWDEBUG=1 node e2e/scripts/run-case.mjs --headed --slow",
-"e2e:record":  "node e2e/scripts/record-with-network.mjs",
-"e2e:verify":  "PW_BASE=$OLD_SANDBOX_URL playwright test --config=e2e/playwright.config.ts tests/verify-on-old"
+"e2e:smoke":     "playwright test --config=e2e/playwright.config.ts tests/new",
+"e2e:case":      "node e2e/scripts/run-case.mjs",
+"e2e:by-spec":   "node e2e/scripts/run-by-spec.mjs",
+"e2e:debug":     "PWDEBUG=1 node e2e/scripts/run-case.mjs --headed --slow",
+"e2e:record":    "node e2e/scripts/record-with-network.mjs",
+"e2e:verify":    "PW_BASE=$OLD_SANDBOX_URL playwright test --config=e2e/playwright.config.ts tests/verify-on-old",
+"e2e:debug:on":  "node e2e/scripts/set-mode.mjs debug",
+"e2e:debug:off": "node e2e/scripts/set-mode.mjs auto",
+"e2e:focus":     "node e2e/scripts/set-focus.mjs"
 ```
 
 - [ ] **Step 2: 写 `e2e/.env.example`（提交进仓，开发者复制为 .env.local）**
@@ -482,12 +488,12 @@ git commit -m "chore(e2e): add text-evidence fixture (dom/console/network dump o
 ## Task 5: 4 个 opencode subagent prompts（D1 上午 Track B，45 分钟）
 
 **Files:**
-- Create: `e2e/.opencode/agent/spec-extractor.md`
-- Create: `e2e/.opencode/agent/spec-merger.md`
-- Create: `e2e/.opencode/agent/test-generator.md`
-- Create: `e2e/.opencode/agent/test-runner.md`
+- Create: `.opencode/agent/spec-extractor.md`
+- Create: `.opencode/agent/spec-merger.md`
+- Create: `.opencode/agent/test-generator.md`
+- Create: `.opencode/agent/test-runner.md`
 
-- [ ] **Step 1: `e2e/.opencode/agent/spec-extractor.md`**
+- [ ] **Step 1: `.opencode/agent/spec-extractor.md`**
 
 ```markdown
 ---
@@ -520,7 +526,7 @@ description: 扫老 Angular 仓库提炼业务规则
 不要尝试修复或解释代码，只提炼规则。
 ```
 
-- [ ] **Step 2: `e2e/.opencode/agent/spec-merger.md`**
+- [ ] **Step 2: `.opencode/agent/spec-merger.md`**
 
 ```markdown
 ---
@@ -548,7 +554,7 @@ description: 合并录制脚本 + AI 扫码 → 业务规格 spec.md
 字段命名遵循业务语义（如 amount/address/customerNumber），不要直接复用录制里的 selector 名。
 ```
 
-- [ ] **Step 3: `e2e/.opencode/agent/test-generator.md`**
+- [ ] **Step 3: `.opencode/agent/test-generator.md`**
 
 ```markdown
 ---
@@ -589,7 +595,7 @@ export class XxxPage {
 \`\`\`
 ```
 
-- [ ] **Step 4: `e2e/.opencode/agent/test-runner.md`**
+- [ ] **Step 4: `.opencode/agent/test-runner.md`**
 
 ```markdown
 ---
@@ -600,7 +606,11 @@ description: 隔离跑 Playwright，输出文本-only JSON 报告（验证者）
 你是测试运行验证者。输入：要跑的 case 名（或 'all'）。
 
 工作流程:
-1. 读 .opencode/focus.json 确定目标
+0. **预检 focus.mode（关键）**: 读 .opencode/focus.json
+   - 若 mode === "debug" 或 "off"：立即返回 `{ "skipped": true, "reason": "focus.mode=<mode>" }`，**不跑测试、不修代码**
+   - 若 process.env.HOOK_DISABLED === "1"：同上
+   - 否则继续
+1. 读 .opencode/focus.json 确定目标 case
 2. 跑 npm run e2e:case <names> 或 npm run e2e:smoke
 3. 解析 test-results/results.json
 4. 失败时读取每个失败 test 的 outputDir:
@@ -614,6 +624,10 @@ description: 隔离跑 Playwright，输出文本-only JSON 报告（验证者）
 - hypothesis 必须仅基于 dom_excerpt / console_logs / network_summary / error_message / stack
 - 禁止在 hypothesis 中出现"截图显示""从图片看""视频中可以看到"等措辞
 - screenshot_path / video_path / trace_path 字段只保留路径供人工查看，不读其内容
+
+【硬约束】尊重 debug 模式：
+- 当 focus.mode 是 debug/off 时，**绝不触发**任何修代码动作
+- 仅返回 skipped 报告，让主 agent 知道 hook 没跑测试
 
 dom_excerpt 截取规则:
 - 找失败 step 的目标 selector（如 testid='xxx'）
@@ -654,7 +668,7 @@ hypothesis 是初步诊断，不能包含修复指令。
 - [ ] **Step 5: commit**
 
 ```bash
-git add e2e/.opencode/agent/
+git add .opencode/agent/
 git commit -m "chore(e2e): add 4 opencode subagent prompts (extractor/merger/generator/runner)"
 ```
 
@@ -663,24 +677,32 @@ git commit -m "chore(e2e): add 4 opencode subagent prompts (extractor/merger/gen
 ## Task 6: completion hook 配置 + 降级 shell wrapper（D1 上午 Track B，30 分钟）
 
 **Files:**
-- Create: `e2e/.opencode/hook-config.json`
-- Create: `e2e/.opencode/focus.json`
+- Create: `.opencode/hook-config.json`
+- Create: `.opencode/focus.json`
 - Create: `e2e/scripts/run-case.mjs`
+- Create: `e2e/scripts/set-mode.mjs`
+- Create: `e2e/scripts/set-focus.mjs`
 - Create: `e2e/scripts/run-case-with-fallback.sh`
 
-- [ ] **Step 1: 写 `e2e/.opencode/focus.json` 初始**
+- [ ] **Step 1: 写 `.opencode/focus.json` 初始（含 mode 字段）**
 
 ```json
 {
   "cases": [],
+  "mode": "auto",
   "started_at": null,
   "owner": null
 }
 ```
 
-> 主 agent 在开始处理某个 flow 前会写入 cases；test-runner subagent 读这个文件决定跑什么。
+`mode` 字段语义：
+- `"auto"` — 默认；hook 触发时正常调 test-runner，失败回喂主 agent
+- `"debug"` — hook 跳过，不自动跑测试；用于人工调试某 case
+- `"off"` — 等同 debug，语义上"我现在不在做这个 case"
 
-- [ ] **Step 2: 写 `e2e/.opencode/hook-config.json`**（具体字段以 Task 0 Step 5 查到的 opencode 版本为准）
+> 主 agent 在开始处理某个 flow 前会写入 cases + mode='auto'；test-runner subagent 读这个文件决定跑什么 + 是否跳过。
+
+- [ ] **Step 2: 写 `.opencode/hook-config.json`**（具体字段以 Task 0 Step 5 查到的 opencode 版本为准）
 
 ```jsonc
 {
@@ -694,12 +716,79 @@ git commit -m "chore(e2e): add 4 opencode subagent prompts (extractor/merger/gen
     "invoke_subagent": "test-runner",
     "subagent_args": {
       "focus_file": ".opencode/focus.json"
-    }
+    },
+    // 调试模式跳过条件
+    "skip_when_focus_mode_in": ["debug", "off"],
+    "skip_when_env_set": "HOOK_DISABLED"
   }
 }
 ```
 
-- [ ] **Step 3: 写 `e2e/scripts/run-case.mjs`**
+> 如果 opencode 当前版本 hook 字段不支持 `skip_when_focus_mode_in` / `skip_when_env_set`：等价做法已写在 `.opencode/agent/test-runner.md`（见 Task 5 Step 4 工作流程的 Step 0 预检）—— subagent prompt 内自检 mode，遇 debug/off 立即 return `{ "skipped": true }` 不跑测试。功能等价。
+
+- [ ] **Step 3: 写 `e2e/scripts/set-mode.mjs`（切换 focus.mode）**
+
+```js
+#!/usr/bin/env node
+// Usage:
+//   node e2e/scripts/set-mode.mjs auto    # 默认
+//   node e2e/scripts/set-mode.mjs debug   # 进入调试模式
+//   node e2e/scripts/set-mode.mjs off     # 完全关
+import * as fs from 'fs';
+
+const FOCUS = '.opencode/focus.json';
+const VALID = ['auto', 'debug', 'off'];
+
+const mode = process.argv[2];
+if (!VALID.includes(mode)) {
+  console.error(`mode must be one of ${VALID.join('|')}, got: ${mode}`);
+  process.exit(2);
+}
+
+let f;
+try {
+  f = JSON.parse(fs.readFileSync(FOCUS, 'utf-8'));
+} catch {
+  f = { cases: [], mode: 'auto', started_at: null, owner: null };
+}
+f.mode = mode;
+fs.writeFileSync(FOCUS, JSON.stringify(f, null, 2));
+console.log(`focus mode set to: ${mode}`);
+```
+
+- [ ] **Step 4: 写 `e2e/scripts/set-focus.mjs`（写当前关注 case）**
+
+```js
+#!/usr/bin/env node
+// Usage:
+//   node e2e/scripts/set-focus.mjs <case-name> [<case-name>...]
+// 写入 .opencode/focus.json 的 cases 字段，并将 mode 设为 auto
+import * as fs from 'fs';
+
+const FOCUS = '.opencode/focus.json';
+const cases = process.argv.slice(2);
+
+if (cases.length === 0) {
+  console.error('Usage: e2e:focus <case-name> [<case-name>...]');
+  process.exit(2);
+}
+
+let f;
+try {
+  f = JSON.parse(fs.readFileSync(FOCUS, 'utf-8'));
+} catch {
+  f = {};
+}
+f.cases = cases;
+f.mode = 'auto';
+f.started_at = new Date().toISOString();
+f.owner = process.env.USER ?? 'unknown';
+
+fs.writeFileSync(FOCUS, JSON.stringify(f, null, 2));
+console.log(`focus set to: ${cases.join(', ')} (mode=auto)`);
+```
+
+- [ ] **Step 5: 写 `e2e/scripts/run-case.mjs`**
 
 ```js
 #!/usr/bin/env node
@@ -727,7 +816,7 @@ const r = spawnSync('npx', args, { stdio: 'inherit', env: process.env });
 process.exit(r.status ?? 1);
 ```
 
-- [ ] **Step 4: 写 `e2e/scripts/run-case-with-fallback.sh`（hook 降级版）**
+- [ ] **Step 6: 写 `e2e/scripts/run-case-with-fallback.sh`（hook 降级版）**
 
 ```bash
 #!/bin/bash
@@ -739,24 +828,28 @@ set -e
 HOOK_LOOP=1 node e2e/scripts/run-case.mjs "$@"
 ```
 
-- [ ] **Step 5: chmod**
+- [ ] **Step 7: chmod + 验证脚本不立即报错**
 
 ```bash
 chmod +x e2e/scripts/run-case-with-fallback.sh e2e/scripts/run-case.mjs
-```
+chmod +x e2e/scripts/set-mode.mjs e2e/scripts/set-focus.mjs
 
-- [ ] **Step 6: 验证脚本不立即报错**
+# 测试 set-mode
+npm run e2e:debug:on
+cat .opencode/focus.json    # 期望 mode: "debug"
+npm run e2e:debug:off
+cat .opencode/focus.json    # 期望 mode: "auto"
 
-```bash
+# 测试 run-case
 node e2e/scripts/run-case.mjs nonexistent-case 2>&1 | head -5
 # 期望: playwright 提示找不到测试文件，但 node script 本身没语法错
 ```
 
-- [ ] **Step 7: commit**
+- [ ] **Step 8: commit**
 
 ```bash
-git add e2e/scripts e2e/.opencode/hook-config.json e2e/.opencode/focus.json
-git commit -m "chore(e2e): add hook config + run-case scripts (with fallback)"
+git add e2e/scripts .opencode/hook-config.json .opencode/focus.json
+git commit -m "chore(e2e): add hook config + run-case/set-mode/set-focus scripts (with fallback)"
 ```
 
 ---
@@ -1038,9 +1131,14 @@ npm run e2e:verify -- tests/verify-on-old/account-opening-e2e-1.spec.ts
 - [ ] **Step 7: 写 focus.json**
 
 ```bash
-cat > e2e/.opencode/focus.json <<'EOF'
+# 推荐用 npm script（自动写入 mode=auto）
+npm run e2e:focus account-opening-e2e-1
+
+# 或手动写
+cat > .opencode/focus.json <<'EOF'
 {
   "cases": ["account-opening-e2e-1"],
+  "mode": "auto",
   "started_at": "2026-05-04T09:00:00Z",
   "owner": "<your-name>"
 }
@@ -1066,14 +1164,14 @@ test-runner 返回 JSON: { failures: [{ kind: "selector_missing", hypothesis: ".
 - 如查 opencode 文档发现当前版本不支持原生 hook → **立刻切换到降级路径**:
   - 主 agent 工作流改为"显式调用 `bash e2e/scripts/run-case-with-fallback.sh <case-name>`"
   - 不再尝试 opencode 原生 hook，**避免阻塞 D3+**
-  - 在 `e2e/.opencode/hook-config.json` 注释顶部加上 `"// FALLBACK MODE - opencode native hook not supported in current version"`
+  - 在 `.opencode/hook-config.json` 注释顶部加上 `"// FALLBACK MODE - opencode native hook not supported in current version"`
 
 如果 Step 8 跑通：保持原生 hook 模式。
 
 - [ ] **Step 10: commit Pilot 2 完成**
 
 ```bash
-git add e2e/pages e2e/tests e2e/fixtures e2e/specs e2e/recorded e2e/.opencode
+git add e2e/pages e2e/tests e2e/fixtures e2e/specs e2e/recorded .opencode
 git commit -m "feat(e2e): pilot 2 done - account-opening-e2e-1 + hook loop verified"
 ```
 
@@ -1091,7 +1189,7 @@ git commit -m "feat(e2e): pilot 2 done - account-opening-e2e-1 + hook loop verif
 5. `npx tsc --noEmit -p e2e/tsconfig.json` 编译过
 6. `npm run e2e:verify -- tests/verify-on-old/<case-name>.spec.ts` 跑通
 7. 落 fixture 到 `e2e/fixtures/<case-name>.json`
-8. `echo '{ "cases": ["<case-name>"] }' > e2e/.opencode/focus.json`
+8. `npm run e2e:focus <case-name>`（或手动写 `.opencode/focus.json`，含 `mode: "auto"`）
 9. 跑新项目: `PW_BASE=$NEW_LOCAL_URL npm run e2e:case <case-name>`，进入 hook 循环让 AI 修
 10. PASS → commit
 
@@ -1870,16 +1968,18 @@ git commit -m "chore(e2e): tag flaky tests after stability run"
 - [ ] **Step 1: `e2e/README.md`（≤2 页）**
 
 ````markdown
-# E2E Tests for Account Opening
+# E2E Tests for Account Opening (xx-sg-hbsp)
+
+> 路径约定: 所有 `e2e/...` 与 `.opencode/...` 都在 `xx-sg-hbsp/` 下。命令在 `xx-sg-hbsp/` 目录跑。
 
 ## 快速开始
 
-1. 复制 `.env.example` 为 `e2e/.env.local`，填值
+1. 复制 `e2e/.env.example` 为 `e2e/.env.local`，填值
 2. `npm install`
 3. 跑测试:
    - 全量: `npm run e2e:smoke`
    - 单 case: `npm run e2e:case account-opening-e2e-1`
-   - debug: `npm run e2e:debug account-opening-e2e-1`
+   - debug headed: `npm run e2e:debug account-opening-e2e-1`
 
 ## 添加新 case
 
@@ -1888,13 +1988,47 @@ git commit -m "chore(e2e): tag flaky tests after stability run"
 3. 跑 verify-on-old: `npm run e2e:verify -- tests/verify-on-old/<case-name>.spec.ts`
 4. 跑 new: `npm run e2e:case <case-name>`
 
-## Hook 闭环
+## Hook 闭环（自动模式）
 
 主 agent 处理某 case 时:
 ```bash
-echo '{ "cases": ["<case-name>"] }' > e2e/.opencode/focus.json
+npm run e2e:focus <case-name>     # 自动写 mode=auto
 ```
 然后开始改代码。结束时 hook 自动跑测试。失败回喂主 agent 继续修，直到 PASS 或 max=5 次。
+
+## 调试模式（避免 AI 自动改代码）⭐
+
+当你想自己手动调试某 case，不希望 hook 触发主 agent 自动改业务代码时：
+
+```bash
+# 进入调试模式
+npm run e2e:debug:on
+# focus.json 的 mode 变成 "debug"
+# hook 触发时 test-runner 立刻 return skipped，不跑测试也不修代码
+
+# 自己手动跑、headed 调试
+npm run e2e:debug -- account-opening-s-7
+npx playwright show-trace test-results/.../trace.zip
+
+# 改 PO 反复试，主 agent 不会动业务代码
+# ...
+
+# 调通后退出调试模式
+npm run e2e:debug:off
+# focus.json mode 回到 "auto"，hook 重新接管
+```
+
+更暴力的 kill switch（整个 session 完全跳过 hook）:
+```bash
+HOOK_DISABLED=1 opencode
+```
+
+什么时候用哪种:
+| 场景 | 用 |
+|---|---|
+| 调试某 case，不想 AI 自动改业务 | `npm run e2e:debug:on` |
+| 临时用 opencode 写别的代码 | `HOOK_DISABLED=1 opencode` |
+| 主 agent 在做 case，正常循环 | mode='auto'（默认） |
 
 ## 失败排查
 
