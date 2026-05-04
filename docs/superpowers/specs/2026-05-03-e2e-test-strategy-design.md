@@ -204,42 +204,49 @@ opencode 主 agent 改业务代码 or 改脚本
 
 ### 2.4 仓库目录结构
 
+> **路径约定**: 本项目按国家组织，新加坡子目录是 `xx-sg-hbsp/`。下面所有 `e2e/...` 与 `.opencode/...` 路径都相对该子目录。命令在 `xx-sg-hbsp/` 下执行（或 monorepo 根 package.json 转发）。
+
 ```
-e2e/
-├── playwright.config.ts
-├── pages/                      # PO 类（业务命名）
-│   └── AccountOpeningFlow.ts
-├── data/
-│   ├── test-data-factory.ts    # 测试数据生成
-│   └── accounts.ts             # 测试账号（按 case 分配）
-├── tests/
-│   ├── verify-on-old/          # 一次性，跑通后归档
-│   └── new/                    # 主战场（CI 长期跑）
-├── recorded/                   # codegen 原料，不进 CI
-│   └── <flow>/
-│       ├── raw.ts
-│       ├── network.json
-│       ├── dom-snapshot.html
-│       └── meta.json
-├── specs/                      # AI 合并后的业务规格
-│   └── <flow>.spec.md
-├── fixtures/                   # 老沙箱接口响应 oracle
-│   └── <flow>.json
-├── scripts/                    # 入口脚本
-│   ├── record-with-network.mjs
-│   ├── run-case.mjs
-│   └── run-by-spec.mjs
-└── .opencode/
-    ├── agent/                  # 4 个 subagent 配置
-    │   ├── spec-extractor.md
-    │   ├── spec-merger.md
-    │   ├── test-generator.md
-    │   └── test-runner.md
-    ├── focus.json              # 主 agent 写入"当前关注 case"
-    └── hook-config.json        # completion hook 配置
+xx-sg-hbsp/                      # 新加坡 React 项目根
+├── package.json
+├── src/                         # 业务代码
+├── .opencode/                   # opencode 配置（项目级，不放进 e2e/）
+│   ├── agent/                   # 4 个 subagent 配置
+│   │   ├── spec-extractor.md
+│   │   ├── spec-merger.md
+│   │   ├── test-generator.md
+│   │   └── test-runner.md
+│   ├── focus.json               # 当前关注 case + 调试模式开关
+│   └── hook-config.json         # completion hook 配置
+└── e2e/                         # 测试代码
+    ├── playwright.config.ts
+    ├── pages/                   # PO 类（业务命名）
+    │   └── AccountOpeningFlow.ts
+    ├── data/
+    │   ├── test-data-factory.ts # 测试数据生成
+    │   └── accounts.ts          # 测试账号
+    ├── helpers/
+    │   ├── text-evidence.ts     # 文本证据 fixture
+    │   └── login.ts             # 登录 helper
+    ├── tests/
+    │   ├── verify-on-old/       # 一次性，跑通后归档
+    │   └── new/                 # 主战场
+    ├── recorded/                # codegen 原料，不进 CI
+    │   └── <flow>/{raw.ts, network.json, dom-snapshot.html, meta.json}
+    ├── specs/                   # AI 合并后的业务规格
+    ├── fixtures/                # 老沙箱接口响应 oracle
+    └── scripts/                 # 入口脚本
+        ├── record-with-network.mjs
+        ├── run-case.mjs
+        ├── run-by-spec.mjs
+        ├── set-mode.mjs         # 切换 focus.mode (auto/debug/off)
+        ├── set-focus.mjs        # 写入当前关注 case
+        └── run-case-with-fallback.sh  # Hook 降级版
 ```
 
-### 2.5 测试入口（三层）
+> **`.opencode/` 不放进 `e2e/` 内** — opencode 默认从工作目录向上查找配置；放在项目根级（`xx-sg-hbsp/.opencode/`）能让无论在 e2e 还是业务代码上下文都被识别。
+
+### 2.5 测试入口（四层）
 
 #### 命令行
 ```bash
@@ -248,27 +255,51 @@ npm run e2e:case order-submit           # 单 case
 npm run e2e:case order-submit login     # 多 case
 npm run e2e:by-spec '下单流程'           # 按业务名
 npm run e2e:debug order-submit          # 带 UI、慢动作
+npm run e2e:debug:on                    # 进入调试模式（hook 不再自动跑）
+npm run e2e:debug:off                   # 退出调试模式
 ```
 
 #### opencode subagent 主动调用
 主 agent 处理某个流程时显式：
 > "调用 test-runner 跑 order-submit"
 
-#### Hook 自动触发
+#### Hook 自动触发（仅 mode='auto' 时）
 主 agent 结束节点 → hook 读 `focus.json` → 调 test-runner。
 
 ```jsonc
 // .opencode/focus.json（主 agent 在开始任务时写入）
 {
   "cases": ["order-submit"],
+  "mode": "auto",                       // "auto" | "debug" | "off"
   "started_at": "2026-05-03T10:00:00Z",
   "owner": "ninesean"
 }
 ```
 
+`mode` 字段语义:
+- `auto`（默认）: hook 触发 → 跑 test-runner → 失败回喂主 agent → 循环 max=5 次
+- `debug`: **hook 跳过**，不自动跑测试也不修代码；用于人工调试某 case
+- `off`: 等同 debug，语义上"我现在不在做这个 case"
+
 #### Hook 触发的测试范围（默认策略）
-- 有 focus → 只跑 focus 指定的 case（30s-2min）
-- 无 focus → 跑全量 smoke
+- mode='auto' + 有 focus → 只跑 focus 指定的 case（30s-2min）
+- mode='auto' + 无 focus → 跑全量 smoke
+- mode='debug' / 'off' → 不跑（人工接管）
+
+#### 调试模式典型工作流
+```bash
+npm run e2e:debug:on                    # focus.json mode → "debug"
+npm run e2e:debug -- account-opening-s-7  # 自己手动跑、headed 调
+npx playwright show-trace test-results/.../trace.zip
+# 改 PO 反复试，主 agent 不会自动改业务代码
+npm run e2e:debug:off                   # 调通后切回，hook 重新接管
+```
+
+#### Env kill switch（更暴力的禁用）
+```bash
+HOOK_DISABLED=1 opencode    # 整个 session 完全跳过 hook
+```
+用于"现在用 opencode 写别的代码、不想跑测试"的场景。
 
 ### 2.6 模型与 agent 配置
 
@@ -428,7 +459,7 @@ PW_BASE=$OLD_SANDBOX_URL npx playwright test tests/verify-on-old/order-submit.sp
 
 主 agent 开始处理 order-submit：
 ```bash
-echo '{ "cases": ["order-submit"] }' > .opencode/focus.json
+echo '{ "cases": ["order-submit"], "mode": "auto" }' > .opencode/focus.json
 ```
 
 主 agent 改新项目代码 → 准备结束 → completion hook 触发：
@@ -664,17 +695,23 @@ test-runner 拿到 `dom.html`（可能几 MB），不能整段塞 JSON：
 | 假断言（pass 但跟 spec 不符） | spec 中 expect 标号 + 测试代码 `// from spec #N` 注释，人工 review 时映射检查 |
 | Hook 死循环 | `max_iterations: 5`，超过停下让人介入 |
 | **AI 试图"读图"做判断**（gpt-5.4 不支持多模态） | test-runner prompt 显式禁用图像引用；hypothesis 必须基于 dom_excerpt / console / network 文本证据；评审时若发现 hypothesis 含"截图显示..."类措辞，视为 prompt 漏写要修补 |
+| **AI 在用户调试时擅自改代码** | `focus.json` 加 `mode: "debug"` 字段；hook 配置 `skip_when_focus_mode_in: ["debug","off"]`；test-runner subagent 自检 mode，遇 debug 立刻 return `{skipped:true}`；env 级 kill switch `HOOK_DISABLED=1` |
 
 ```jsonc
 // .opencode/hook-config.json（具体字段名以 opencode 实际版本为准）
 {
   "completion_hook": {
+    "enabled": true,
     "max_iterations": 5,
     "on_max_reached": "stop_with_message",
-    "message": "已尝试 5 次仍有失败，请人工介入。最近报告见 test-results/last.json"
+    "message": "已尝试 5 次仍有失败，请人工介入。最近报告见 test-results/last.json",
+    "skip_when_focus_mode_in": ["debug", "off"],
+    "skip_when_env_set": "HOOK_DISABLED"
   }
 }
 ```
+
+> 如果 opencode 当前版本 hook 字段不支持 `skip_when_focus_mode_in`，等价做法：让 test-runner subagent 在 prompt 顶部加一条预检——读取 `focus.json` 的 mode，遇 `debug`/`off` 立刻返回 `{ "skipped": true, "reason": "<mode>" }` 不跑测试。
 
 ### 4.7 测试金字塔（Account Opening 多步分支草稿场景）
 
@@ -973,7 +1010,11 @@ npm run e2e:case "$@"
 你是测试运行验证者。输入：要跑的 case 名（或 'all'）。
 
 工作流程：
-1. 读 .opencode/focus.json，确定目标
+0. **预检 focus.mode（关键）**：读 .opencode/focus.json，
+   - 若 mode === "debug" 或 "off"：立即返回 `{ "skipped": true, "reason": "focus.mode=<mode>" }`，不跑测试
+   - 若 process.env.HOOK_DISABLED === "1"：同上，return skipped
+   - 否则继续
+1. 读 .opencode/focus.json，确定目标 case
 2. 跑 npm run e2e:case <names> 或 npm run e2e:smoke
 3. 解析 test-results/results.json
 4. 失败时读取每个失败 test 的 outputDir：
@@ -987,6 +1028,10 @@ npm run e2e:case "$@"
 - hypothesis 必须仅基于 dom_excerpt / console_logs / network_summary / error_message / stack
 - 禁止在 hypothesis 中出现"截图显示""从图片看""视频中可以看到"等措辞
 - screenshot_path / video_path / trace_path 字段只保留路径供人工查看，不读其内容
+
+【硬约束】尊重 debug 模式：
+- 当 focus.mode 是 debug/off 时，**绝不**触发任何修代码动作
+- 仅返回 skipped 报告，让主 agent 知道 hook 没跑测试
 
 不输出任何 Playwright 原始日志、stack trace 全文、stdout。
 hypothesis 字段必须是初步诊断，不能包含修复指令。
